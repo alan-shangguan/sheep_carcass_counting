@@ -287,7 +287,7 @@ async def stream():
 @app.get("/", response_class=HTMLResponse, summary="Web control UI")
 async def index(request: Request) -> HTMLResponse:
     """Serve the single-page HTML control interface."""
-    return templates.TemplateResponse(request, "index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 def _debug_main() -> None:
