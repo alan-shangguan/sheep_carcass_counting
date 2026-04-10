@@ -1,0 +1,101 @@
+# Runtime configuration for the sheep carcass counting backend.
+# Edit values here instead of changing Python source.
+
+video:
+  # Local input video file.
+  path: videos/Event20260123020157006.mp4
+
+  # Restart from frame 0 when the file reaches the end.
+  loop: false
+
+model:
+  # Supports .pt, .onnx, or an OpenVINO exported model directory.
+  path: weights/best_openvino_model
+
+  # Explicit task avoids Ultralytics auto-guess warnings.
+  task: detect
+
+  # Track all classes when null. Use [0] or [0, 1] to restrict classes.
+  classes: 0
+
+  # Keep tracker state across frames.
+  persist_tracking: true
+
+  # Ultralytics verbosity during inference.
+  verbose: false
+
+  # Minimum detector confidence for tracked boxes.
+  conf_threshold: 0.25
+
+  # IoU threshold used by the tracker/detector.
+  iou_threshold: 0.45
+
+  # Run detection/tracking once every N frames.
+  skip_frame: 5
+
+counter:
+  Name: TripwireEvent
+  Type: TripwireSetBin
+  Input: ObjectCounter
+
+  # Two-point tripwire polylines in normalized coordinates.
+  Polylines:
+    - [[1.00, 0.40], [0.00, 0.40]]
+    - [[1.00, 0.20], [0.00, 0.20]]
+
+  # Motion direction across each polyline side, not the point order itself.
+  CrossingDirections: [left-to-right, left-to-right]
+
+  # 1-based order of tripwires that define the corridor.
+  CrossingOrder: [1, 2]
+
+  # Only normalized coordinates are currently supported.
+  Unit: Normalized
+
+  # Supported: TopCenter, BottomCenter, BottomRight
+  AnchorPoint: TopCenter
+
+  # Consecutive stable frames required before a zone is trusted.
+  min_hits: 3
+
+  # Filter counted objects using observed clean-instance size statistics.
+  size_sanity:
+    enabled: true
+    min_width_ratio: 0.10
+    max_width_ratio: 0.409
+    min_height_ratio: 0.057
+    max_height_ratio: 0.422
+    min_area_ratio: 0.006
+    max_area_ratio: 0.12
+    min_aspect_ratio: 0.56
+    max_aspect_ratio: 2.23
+
+stream:
+  # JPEG quality for the MJPEG stream.
+  jpeg_quality: 80
+
+  # Placeholder frame size used when the video cannot be read yet.
+  placeholder_width: 640
+  placeholder_height: 480
+
+output_video:
+  # Save an annotated result video with the count overlay and gate line.
+  enabled: true
+
+  # Output path for the generated review video.
+  path: outputs/counting_result.mp4
+
+  # FourCC codec for cv2.VideoWriter.
+  codec: mp4v
+
+  # Leave null to reuse the input video FPS.
+  fps: null
+
+  # When false, only frames processed while running=true are written.
+  write_when_paused: false
+
+server:
+  # Informational values for local launches.
+  host: 0.0.0.0
+  port: 8000
+  reload: false

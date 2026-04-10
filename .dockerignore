@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local dev artefacts
+.git/
+.gitignore
+*.md
+
+# These are mounted as volumes at runtime – no need to bake them in
+videos/
+weights/
+
+# IDE
+.vscode/
+.idea/

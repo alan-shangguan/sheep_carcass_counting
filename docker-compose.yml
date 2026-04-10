@@ -1,0 +1,20 @@
+services:
+  sheep-counter:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount local videos and weights into the container at runtime.
+      # Paths inside the container must match the ENV defaults in Dockerfile.
+      - ./videos:/app/videos:ro
+      - ./weights:/app/weights:ro
+    environment:
+      VIDEO_PATH: "videos/Event20260123020157006.mp4"
+      MODEL_PATH: "weights/best_openvino_model"
+      GATE_Y_RATIO: "0.5"
+      DEAD_BAND_RATIO: "0.05"
+      MIN_HITS: "3"
+      COUNT_DIRECTION: "any"
+      MODEL_CLASSES: ""
+      JPEG_QUALITY: "80"
+    restart: unless-stopped

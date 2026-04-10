@@ -1,0 +1,57 @@
+# Temporary render config derived from current config.yaml.
+# Keeps the current counting settings, but normalizes polyline point order so
+# the configured left-to-right directions are valid for the validator.
+
+video:
+  path: videos/Event20260204013619006_first10s.mp4
+  loop: false
+
+model:
+  path: weights/best_openvino_model
+  task: detect
+  classes: 0
+  persist_tracking: true
+  verbose: false
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  skip_frame: 5
+
+counter:
+  Name: TripwireEvent
+  Type: TripwireSetBin
+  Input: ObjectCounter
+  Polylines:
+    - [[0.00, 0.40], [1.00, 0.40]]
+    - [[0.00, 0.20], [1.00, 0.20]]
+  CrossingDirections: [left-to-right, left-to-right]
+  CrossingOrder: [1, 2]
+  Unit: Normalized
+  AnchorPoint: TopCenter
+  min_hits: 3
+  size_sanity:
+    enabled: true
+    min_width_ratio: 0.10
+    max_width_ratio: 0.409
+    min_height_ratio: 0.057
+    max_height_ratio: 0.422
+    min_area_ratio: 0.006
+    max_area_ratio: 0.12
+    min_aspect_ratio: 0.56
+    max_aspect_ratio: 2.23
+
+stream:
+  jpeg_quality: 80
+  placeholder_width: 640
+  placeholder_height: 480
+
+output_video:
+  enabled: true
+  path: outputs/Event20260204013619006_first10s_current_config.avi
+  codec: XVID
+  fps: null
+  write_when_paused: false
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  reload: false

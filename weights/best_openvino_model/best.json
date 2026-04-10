@@ -1,0 +1,30 @@
+{
+  "json_schema_version": "2.2.0",
+  "input_preproc": [
+    {
+      "format": "image",
+      "layer_name": "images",
+      "params": {
+        "resize": "aspect-ratio",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "color_space": "RGB",
+        "reverse_channels": true
+      }
+    }
+  ],
+  "output_postproc": [
+    {
+      "converter": "yolo_v8",
+      "iou_threshold": 0.7,
+      "nms_threshold": 0.7,
+      "bbox_number_on_cell": 3,
+      "classes": 1,
+      "labels": [
+        "object"
+      ]
+    }
+  ]
+}
