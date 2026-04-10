@@ -101,6 +101,12 @@ try:
 except ImportError:
     _YOLO_AVAILABLE = False
 
+_CV2_DRAW_AVAILABLE = all(
+    hasattr(cv2, attr)
+    for attr in ("putText", "line", "rectangle", "addWeighted", "getTextSize")
+)
+_CV2_ENCODE_AVAILABLE = hasattr(cv2, "imencode")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,6 +121,8 @@ def _load_model(state: SharedState):
     if not _YOLO_AVAILABLE:
         with state.lock:
             state.status_text = "YOLO not installed – running in mock/preview mode"
+            state.model_ready = False
+        state.add_event("model_unavailable", {"reason": "ultralytics_not_installed"})
         return None
 
     try:
@@ -124,10 +132,14 @@ def _load_model(state: SharedState):
             model = _YOLO(MODEL_PATH)
         with state.lock:
             state.status_text = f"Model loaded: {MODEL_PATH}"
+            state.model_ready = True
+        state.add_event("model_loaded", {"model_path": MODEL_PATH})
         return model
     except Exception as exc:
         with state.lock:
             state.status_text = f"Model load failed ({exc}) – mock/preview mode"
+            state.model_ready = False
+        state.add_event("model_load_failed", {"model_path": MODEL_PATH, "error": str(exc)})
         return None
 
 
@@ -136,10 +148,18 @@ def _open_video(state: SharedState) -> cv2.VideoCapture | None:
     Try to open the configured video file.  Returns a VideoCapture object
     that isOpened(), or None on failure.
     """
-    cap = cv2.VideoCapture(VIDEO_PATH)
+    try:
+        cap = cv2.VideoCapture(VIDEO_PATH)
+    except Exception as exc:
+        with state.lock:
+            state.status_text = f"Video backend unavailable: {exc}"
+        state.add_event("video_open_exception", {"video_path": VIDEO_PATH, "error": str(exc)})
+        return None
+
     if not cap.isOpened():
         with state.lock:
             state.status_text = f"Cannot open video: {VIDEO_PATH}"
+        state.add_event("video_open_failed", {"video_path": VIDEO_PATH})
         return None
     return cap
 
@@ -163,6 +183,9 @@ def _put_text(
     thickness: int,
 ) -> None:
     """Draw high-contrast text for recorded output and MJPEG preview."""
+    if not hasattr(cv2, "putText"):
+        return
+
     cv2.putText(
         frame,
         text,
@@ -187,6 +210,9 @@ def _put_text(
 
 def _draw_gate(frame: np.ndarray, active: bool, flash: bool = False) -> None:
     """Overlay configured ordered tripwire polylines on the frame in-place."""
+    if not hasattr(cv2, "line"):
+        return
+
     h, w = frame.shape[:2]
     colour = (0, 0, 255) if flash else ((0, 255, 0) if active else (0, 200, 200))
 
@@ -201,6 +227,9 @@ def _draw_gate(frame: np.ndarray, active: bool, flash: bool = False) -> None:
 
 def _draw_config_overlay(frame: np.ndarray) -> None:
     """Render the active runtime configuration as a compact overlay."""
+    if not _CV2_DRAW_AVAILABLE:
+        return
+
     lines = [
         f"Anchor: {TRIPWIRE_ANCHOR_POINT}",
         f"Dir: {'/'.join(TRIPWIRE_CROSSING_DIRECTIONS)}",
@@ -332,6 +361,11 @@ def run_engine(state: SharedState) -> None:
     8.  Sleep to honour the source video's frame rate.
     """
     model = _load_model(state)
+    with state.lock:
+        state.engine_thread_alive = True
+        state.shutdown_requested = False
+    state.add_event("engine_started", {"video_path": VIDEO_PATH, "model_path": MODEL_PATH})
+
     cap: cv2.VideoCapture | None = None
     output_writer: cv2.VideoWriter | None = None
     output_writer_failed = False
@@ -346,6 +380,10 @@ def run_engine(state: SharedState) -> None:
 
     while True:
         t_iter_start = time.perf_counter()
+
+        with state.lock:
+            if state.shutdown_requested:
+                break
 
         # ------------------------------------------------------------------ #
         # 1. Handle reset (momentary flag)                                    #
@@ -372,12 +410,26 @@ def run_engine(state: SharedState) -> None:
             if cap is None:
                 # Emit a placeholder frame so /stream stays alive.
                 ph = _placeholder_frame(f"Waiting for video: {VIDEO_PATH}")
-                _, jpeg_buf = cv2.imencode(
-                    ".jpg", ph, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-                )
-                with state.lock:
-                    state.latest_jpeg = jpeg_buf.tobytes()
-                    state.latest_frame_ts = time.time()
+                if _CV2_ENCODE_AVAILABLE:
+                    try:
+                        ok, jpeg_buf = cv2.imencode(
+                            ".jpg", ph, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+                        )
+                        if ok:
+                            with state.lock:
+                                state.latest_jpeg = jpeg_buf.tobytes()
+                                state.latest_frame_ts = time.time()
+                    except Exception as exc:
+                        with state.lock:
+                            state.status_text = "OpenCV JPEG encoding unavailable"
+                        state.add_event(
+                            "jpeg_encode_error",
+                            {"stage": "placeholder", "error": str(exc)},
+                        )
+                else:
+                    with state.lock:
+                        state.status_text = "OpenCV JPEG encoding unavailable"
+                    state.add_event("jpeg_encode_unavailable", {"stage": "placeholder"})
                 time.sleep(1.0)
                 continue
 
@@ -394,6 +446,7 @@ def run_engine(state: SharedState) -> None:
             if CONFIG.video.loop:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 print({"event": "video_loop", "video_path": VIDEO_PATH}, flush=True)
+                state.add_event("video_loop", {"video_path": VIDEO_PATH})
             else:
                 if output_writer is not None and not output_writer_released:
                     output_writer.release()
@@ -404,6 +457,7 @@ def run_engine(state: SharedState) -> None:
                     else:
                         state.status_text = f"Video ended: {VIDEO_PATH}"
                 print({"event": "video_end", "video_path": VIDEO_PATH, "output_path": OUTPUT_VIDEO_PATH}, flush=True)
+                state.add_event("video_end", {"video_path": VIDEO_PATH, "output_path": OUTPUT_VIDEO_PATH})
                 time.sleep(0.25)
             continue
 
@@ -418,6 +472,7 @@ def run_engine(state: SharedState) -> None:
                 with state.lock:
                     state.status_text = f"Output video open failed: {OUTPUT_VIDEO_PATH}"
                 print({"event": "output_writer_failed", "output_path": OUTPUT_VIDEO_PATH}, flush=True)
+                state.add_event("output_writer_failed", {"output_path": OUTPUT_VIDEO_PATH})
             elif output_writer is not None:
                 print(
                     {
@@ -427,6 +482,14 @@ def run_engine(state: SharedState) -> None:
                         "frame_size": [frame_w, frame_h],
                     },
                     flush=True,
+                )
+                state.add_event(
+                    "output_writer_opened",
+                    {
+                        "output_path": OUTPUT_VIDEO_PATH,
+                        "fps": writer_fps,
+                        "frame_size": [frame_w, frame_h],
+                    },
                 )
 
         # ------------------------------------------------------------------ #
@@ -440,6 +503,7 @@ def run_engine(state: SharedState) -> None:
                     # Run detection/tracking on one frame out of every SKIP_FRAME.
                     if (frame_index - 1) % SKIP_FRAME == 0:
                         inference_runs += 1
+                        inference_t0 = time.perf_counter()
                         results = model.track(
                             frame,
                             persist=CONFIG.model.persist_tracking,
@@ -448,6 +512,9 @@ def run_engine(state: SharedState) -> None:
                             conf=MODEL_CONF_THRESHOLD,
                             iou=MODEL_IOU_THRESHOLD,
                         )
+                        inference_ms = (time.perf_counter() - inference_t0) * 1000.0
+                        state.update_loop_metrics(frame_processed=False, inference_latency_ms=inference_ms)
+
                         # Use the annotated frame produced by ultralytics.
                         frame = results[0].plot()
 
@@ -492,10 +559,12 @@ def run_engine(state: SharedState) -> None:
                             )
                             gate_flash_frames_remaining = max(2, SKIP_FRAME)
                             print({"event": "crossing", **last_event}, flush=True)
+                            state.add_event("crossing", dict(last_event))
                 except Exception as exc:
                     # Inference errors must not crash the stream.
                     _put_text(frame, f"Inference error: {exc}", (10, 45), 1.0, (0, 0, 255), 2)
                     print({"event": "inference_error", "frame": frame_index, "error": str(exc)}, flush=True)
+                    state.add_event("inference_error", {"frame": frame_index, "error": str(exc)})
             else:
                 # Mock mode: no inference, no counting.
                 _put_text(frame, "MOCK MODE - no YOLO model", (10, 45), 1.1, (0, 120, 255), 2)
@@ -558,13 +627,30 @@ def run_engine(state: SharedState) -> None:
         # ------------------------------------------------------------------ #
         # 7. Encode to JPEG and store                                          #
         # ------------------------------------------------------------------ #
-        ok, jpeg_buf = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-        )
+        if not _CV2_ENCODE_AVAILABLE:
+            with state.lock:
+                state.status_text = "OpenCV JPEG encoding unavailable"
+            state.add_event("jpeg_encode_unavailable", {"stage": "frame"})
+            time.sleep(0.2)
+            continue
+
+        try:
+            ok, jpeg_buf = cv2.imencode(
+                ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+            )
+        except Exception as exc:
+            with state.lock:
+                state.status_text = "OpenCV JPEG encoding unavailable"
+            state.add_event("jpeg_encode_error", {"stage": "frame", "error": str(exc)})
+            time.sleep(0.2)
+            continue
+
         if ok:
             with state.lock:
                 state.latest_jpeg = jpeg_buf.tobytes()
                 state.latest_frame_ts = time.time()
+
+        state.update_loop_metrics(frame_processed=True)
 
         # ------------------------------------------------------------------ #
         # 8. Frame-rate throttle                                               #
@@ -573,6 +659,16 @@ def run_engine(state: SharedState) -> None:
         sleep_time = target_frame_time - elapsed
         if sleep_time > 0.0:
             time.sleep(sleep_time)
+
+    if cap is not None and cap.isOpened():
+        cap.release()
+    if output_writer is not None and not output_writer_released:
+        output_writer.release()
+
+    with state.lock:
+        state.engine_thread_alive = False
+        state.status_text = "Engine stopped"
+    state.add_event("engine_stopped", {})
 
 
 def _debug_main() -> None:

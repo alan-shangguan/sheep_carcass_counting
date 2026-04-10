@@ -13,6 +13,8 @@ during long operations like YOLO inference or JPEG encoding.
 from __future__ import annotations
 
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass, field
 
 
@@ -50,6 +52,30 @@ class SharedState:
     latest_frame_ts: float = 0.0
 
     # ------------------------------------------------------------------ #
+    # Lifecycle, readiness, and metrics                                   #
+    # ------------------------------------------------------------------ #
+
+    # Process start timestamp used for uptime calculations.
+    started_at: float = field(default_factory=time.time)
+
+    # Set during startup validation. When False, /ready should fail.
+    startup_validated: bool = False
+    startup_errors: list[str] = field(default_factory=list)
+
+    # Engine thread lifecycle flags.
+    engine_thread_alive: bool = False
+    model_ready: bool = False
+    shutdown_requested: bool = False
+
+    # Runtime metrics updated by the engine.
+    frames_processed: int = 0
+    inference_runs: int = 0
+    loop_fps: float = 0.0
+    last_inference_latency_ms: float = 0.0
+    avg_inference_latency_ms: float = 0.0
+    _last_frame_tick: float = 0.0
+
+    # ------------------------------------------------------------------ #
     # Per-track counting memory – owned by engine/counter, cleared on     #
     # reset.  Structure is defined and mutated by app/counter.py.         #
     # ------------------------------------------------------------------ #
@@ -57,6 +83,10 @@ class SharedState:
     # Dict[track_id: int, track_entry: dict]
     # See counter.py for the schema of each entry.
     track_memory: dict = field(default_factory=dict)
+
+    # Structured audit/history events for backend APIs.
+    event_history: deque = field(default_factory=lambda: deque(maxlen=500))
+    next_event_id: int = 1
 
     # ------------------------------------------------------------------ #
     # Synchronisation primitive                                            #
@@ -66,6 +96,40 @@ class SharedState:
     # Use fine-grained locking: acquire, read/write the relevant fields,
     # release immediately – never hold across blocking I/O or inference.
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def add_event(self, event_type: str, payload: dict | None = None) -> None:
+        """Append a structured event to the in-memory ring buffer."""
+        with self.lock:
+            event = {
+                "id": self.next_event_id,
+                "ts": time.time(),
+                "type": event_type,
+                "payload": payload or {},
+            }
+            self.next_event_id += 1
+            self.event_history.append(event)
+
+    def update_loop_metrics(self, *, frame_processed: bool, inference_latency_ms: float | None = None) -> None:
+        """Update FPS and inference latency metrics from the engine loop."""
+        now = time.time()
+        with self.lock:
+            if frame_processed:
+                self.frames_processed += 1
+                if self._last_frame_tick > 0.0:
+                    dt = now - self._last_frame_tick
+                    if dt > 0:
+                        instant_fps = 1.0 / dt
+                        self.loop_fps = instant_fps if self.loop_fps <= 0.0 else (self.loop_fps * 0.9 + instant_fps * 0.1)
+                self._last_frame_tick = now
+
+            if inference_latency_ms is not None:
+                self.last_inference_latency_ms = float(inference_latency_ms)
+                self.avg_inference_latency_ms = (
+                    self.last_inference_latency_ms
+                    if self.avg_inference_latency_ms <= 0.0
+                    else (self.avg_inference_latency_ms * 0.9 + self.last_inference_latency_ms * 0.1)
+                )
+                self.inference_runs += 1
 
     def snapshot(self) -> dict:
         """Return a small serialisable state snapshot for logging/debugging."""
@@ -78,6 +142,16 @@ class SharedState:
                 "latest_jpeg_ready": self.latest_jpeg is not None,
                 "latest_frame_ts": self.latest_frame_ts,
                 "track_memory_size": len(self.track_memory),
+                "startup_validated": self.startup_validated,
+                "startup_errors": list(self.startup_errors),
+                "engine_thread_alive": self.engine_thread_alive,
+                "model_ready": self.model_ready,
+                "frames_processed": self.frames_processed,
+                "inference_runs": self.inference_runs,
+                "loop_fps": self.loop_fps,
+                "last_inference_latency_ms": self.last_inference_latency_ms,
+                "avg_inference_latency_ms": self.avg_inference_latency_ms,
+                "uptime_seconds": max(0.0, time.time() - self.started_at),
             }
 
 
