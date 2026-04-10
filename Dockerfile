@@ -1,31 +1,16 @@
-# ---- Build stage: install Python deps --------------------------------
-FROM python:3.10-slim AS builder
-
-WORKDIR /install
-
-# System libs needed by opencv-python-headless at build time
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc \
-        libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install/pkg -r requirements.txt
-
-
-# ---- Runtime stage ---------------------------------------------------
+# ---- Unified minimal image: CPU-only, no GPU, minimal deps --------
 FROM python:3.10-slim
-
-# Runtime system libs for OpenCV headless
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libglib2.0-0 \
-        libgl1 \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy installed packages from builder
-COPY --from=builder /install/pkg /usr/local
+# Minimal system libs for OpenCV + pip build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies (CPU-only, no GPU support)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source
 COPY app/ app/

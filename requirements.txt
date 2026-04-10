@@ -1,24 +1,20 @@
-# Sheep Carcass Counter – Python dependencies
-# Install with:  pip install -r requirements.txt
+# Sheep Carcass Counter – Minimal CPU-only dependencies
 
-# Web framework and server
+# Web framework
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-
-# Template rendering (Jinja2 is a transitive dep of fastapi/starlette,
-# listed explicitly for clarity)
-jinja2>=3.1.0
 pyyaml>=6.0.0
 
-# Computer vision
-opencv-python-headless>=4.9.0   # headless build – no Qt/GTK GUI libs needed
+# Computer vision (headless)
+opencv-python-headless>=4.9.0
 
-# YOLO inference and tracking (optional – the app runs in mock/preview
-# mode if this package is absent or the weights file is missing)
+# YOLO detection  
 ultralytics>=8.2.0
+torch>=2.0.0
 
-# numpy is pulled in by both opencv and ultralytics; pin a safe floor
+# Numeric computing  
 numpy>=1.24.0
 
-# OpenVINO runtime – required for inference with the best_openvino_model directory
-openvino>=2024.0.0
+# OpenVINO CPU runtime (no GPU/NPU support)
+openvino-cpu>=2024.0.0
+
