@@ -102,6 +102,19 @@ def _normalise_direction(direction: str) -> str:
     return normalised
 
 
+def _direction_allows_delta(direction: str, line_delta: int) -> bool:
+    """Return whether a configured direction allows this line crossing delta.
+
+    The delta sign is derived from side changes relative to polyline point order.
+    Positive means left->right, negative means right->left.
+    """
+    if direction in {"left_to_right", "top_to_bottom"}:
+        return line_delta > 0
+    if direction in {"right_to_left", "bottom_to_top"}:
+        return line_delta < 0
+    return True
+
+
 def process_frame(
     tracks: list[dict],
     track_memory: dict,
@@ -114,14 +127,15 @@ def process_frame(
     unit: str = "normalized",
     anchor_point: str = "topcenter",
     min_hits: int = 3,
+    state_threshold: int = 3,
+    reverse_decrease_counting: bool = False,
 ) -> int:
     """
     Evaluate one video frame and return the signed count delta.
 
-    min_hits is retained for backward compatibility and is intentionally
-    ignored by the 5-state logic.
+    state_threshold: Number of state observations needed before detecting a crossing.
+                     Default 3 (was 5 in original design). Lower value = more lenient tracking.
     """
-    _ = min_hits
 
     if unit != "normalized":
         raise ValueError("Only normalized tripwire coordinates are supported")
@@ -157,9 +171,9 @@ def process_frame(
                 continue
 
             side_history.append(side)
-            if len(side_history) > 5:
+            if len(side_history) > state_threshold:
                 side_history.pop(0)
-            if len(side_history) < 5:
+            if len(side_history) < state_threshold:
                 continue
 
             first_side = side_history[0]
@@ -168,12 +182,19 @@ def process_frame(
             if line_delta == 0:
                 continue
 
+            configured_direction = normalised_directions[line_index - 1]
+            if line_delta < 0 and reverse_decrease_counting:
+                # Allow reverse travel to generate decrement events when enabled.
+                pass
+            elif not _direction_allows_delta(configured_direction, line_delta):
+                continue
+
             side_history[:] = [last_side]
             line_events.append(
                 {
                     "line_index": line_index,
                     "line_delta": line_delta,
-                    "direction": normalised_directions[line_index - 1],
+                    "direction": configured_direction,
                     "first_zone": first_side,
                     "last_zone": last_side,
                 }

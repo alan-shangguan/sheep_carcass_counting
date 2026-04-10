@@ -31,7 +31,8 @@ model:
   iou_threshold: 0.45
 
   # Run detection/tracking once every N frames.
-  skip_frame: 5
+  # Set to 1 to run inference on every frame (more detection but slower).
+  skip_frame: 1
 
 counter:
   Name: TripwireEvent
@@ -39,15 +40,22 @@ counter:
   Input: ObjectCounter
 
   # Two-point tripwire polylines in normalized coordinates.
+  # Points go LEFT to RIGHT (0.0 to 1.0) to match "left-to-right" direction label
   Polylines:
-    - [[1.00, 0.40], [0.00, 0.40]]
-    - [[1.00, 0.20], [0.00, 0.20]]
+    - [[0.00, 0.40], [1.00, 0.40]]
+    - [[0.00, 0.20], [1.00, 0.20]]
 
   # Motion direction across each polyline side, not the point order itself.
   CrossingDirections: [left-to-right, left-to-right]
 
   # 1-based order of tripwires that define the corridor.
   CrossingOrder: [1, 2]
+
+  # Minimum state observations before detecting a crossing. Lower = more lenient tracking.
+  state_threshold: 3
+
+  # When true, reverse travel across the ordered lines decrements the count.
+  reverse_decrease_counting: true
 
   # Only normalized coordinates are currently supported.
   Unit: Normalized
@@ -60,7 +68,7 @@ counter:
 
   # Filter counted objects using observed clean-instance size statistics.
   size_sanity:
-    enabled: true
+    enabled: false
     min_width_ratio: 0.10
     max_width_ratio: 0.409
     min_height_ratio: 0.057

@@ -1,0 +1,13 @@
+FROM ultralytics/ultralytics:latest-cpu
+
+WORKDIR /work
+
+# Preinstall render-time dependencies once at image build time so runtime
+# renders do not trigger Ultralytics AutoUpdate each run.
+RUN python -m pip install --no-cache-dir \
+    pyyaml \
+    fastapi \
+    uvicorn \
+    jinja2 \
+    openvino>=2024.0.0 \
+    lap>=0.5.12

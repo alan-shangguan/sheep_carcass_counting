@@ -77,6 +77,8 @@ TRIPWIRE_CROSSING_DIRECTIONS: list[str] = CONFIG.counter.crossing_directions
 TRIPWIRE_CROSSING_ORDER: list[int] = CONFIG.counter.crossing_order
 TRIPWIRE_UNIT: str = CONFIG.counter.unit
 TRIPWIRE_ANCHOR_POINT: str = CONFIG.counter.anchor_point
+TRIPWIRE_STATE_THRESHOLD: int = CONFIG.counter.state_threshold
+TRIPWIRE_REVERSE_DECREASE_COUNTING: bool = CONFIG.counter.reverse_decrease_counting
 MIN_HITS: int = int(os.environ.get("MIN_HITS", str(CONFIG.counter.min_hits)))
 MODEL_CLASSES: list[int] | None = CONFIG.model.classes
 SKIP_FRAME: int = max(1, int(CONFIG.model.skip_frame))
@@ -463,6 +465,8 @@ def run_engine(state: SharedState) -> None:
                             unit=TRIPWIRE_UNIT,
                             anchor_point=TRIPWIRE_ANCHOR_POINT,
                             min_hits=MIN_HITS,
+                            state_threshold=TRIPWIRE_STATE_THRESHOLD,
+                            reverse_decrease_counting=TRIPWIRE_REVERSE_DECREASE_COUNTING,
                         )
                         print(
                             {
@@ -504,10 +508,6 @@ def run_engine(state: SharedState) -> None:
         gate_flash_active = gate_flash_frames_remaining > 0
         _draw_gate(frame, running, flash=gate_flash_active)
 
-        # Running / paused banner.
-        if not running:
-            _put_text(frame, "PAUSED", (10, 50), 1.6, (0, 220, 220), 3)
-
         # Count overlay (always visible).
         with state.lock:
             state.count += count_increment
@@ -525,14 +525,29 @@ def run_engine(state: SharedState) -> None:
                 flush=True,
             )
 
-        _put_text(frame, f"Count: {count_display}", (10, frame_h - 24), 1.8, (255, 255, 0), 4)
-        if running and SKIP_FRAME > 1:
-            _put_text(frame, f"SkipFrame: {SKIP_FRAME}", (10, 90), 1.0, (255, 255, 255), 2)
-        if running:
-            _put_text(frame, f"Conf: {MODEL_CONF_THRESHOLD:.2f} IoU: {MODEL_IOU_THRESHOLD:.2f}", (10, 135), 1.0, (255, 255, 255), 2)
+        # Consolidated top-left HUD block for all status text.
+        _put_text(frame, f"Count: {count_display}", (16, 52), 1.4, (255, 255, 0), 3)
+        mode_text = "Mode: RUNNING" if running else "Mode: PAUSED"
+        mode_colour = (80, 255, 80) if running else (0, 220, 220)
+        _put_text(frame, mode_text, (16, 86), 0.95, mode_colour, 2)
+
+        info_y = 116
+        if SKIP_FRAME > 1:
+            _put_text(frame, f"SkipFrame: {SKIP_FRAME}", (16, info_y), 0.9, (255, 255, 255), 2)
+            info_y += 28
+        _put_text(
+            frame,
+            f"Conf: {MODEL_CONF_THRESHOLD:.2f} IoU: {MODEL_IOU_THRESHOLD:.2f}",
+            (16, info_y),
+            0.9,
+            (255, 255, 255),
+            2,
+        )
+
+        # Keep latest crossing event in a bottom banner to avoid overlap with boxes/tripwires.
         if last_crossing_text:
             event_colour = (0, 0, 255) if gate_flash_active else (255, 255, 255)
-            _put_text(frame, last_crossing_text, (10, 180), 1.0, event_colour, 2)
+            _put_text(frame, last_crossing_text, (16, frame_h - 24), 0.9, event_colour, 2)
         _draw_config_overlay(frame)
         if gate_flash_frames_remaining > 0:
             gate_flash_frames_remaining -= 1
