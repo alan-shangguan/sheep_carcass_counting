@@ -103,6 +103,10 @@ This handles the main failure modes:
 - Carcass swaying: the two-line corridor requires ordered movement through the
   gate, which is more reliable than a single tripwire hit.
 
+> Note: the core assessment answer is above this point. The remaining sections
+> are supporting reference material for reviewers who want implementation
+> details, API routes, configuration keys, and repository layout.
+
 ## Requirement Coverage
 
 | Requirement | Implementation |
