@@ -77,7 +77,18 @@ counter:
   CrossingDirections: [left-to-right, left-to-right]
   CrossingOrder: [1, 2]
   AnchorPoint: TopCenter
+  min_hits: 3
   state_threshold: 3
+  size_sanity:
+    enabled: true
+    min_width_ratio: 0.10
+    max_width_ratio: 0.409
+    min_height_ratio: 0.057
+    max_height_ratio: 0.422
+    min_area_ratio: 0.006
+    max_area_ratio: 0.12
+    min_aspect_ratio: 0.56
+    max_aspect_ratio: 2.23
 ```
 
 The runtime logic is:
@@ -332,7 +343,8 @@ Important keys:
 - `output_video.write_when_paused`
 - `server.host`, `server.port`, `server.reload`
 
-Current active defaults:
+
+Current active defaults (see config.yml):
 
 - Input video: `videos/Event20260123020157006.mp4`
 - Model path: `weights/best_openvino_model`
@@ -342,12 +354,18 @@ Current active defaults:
 - Skip frame: `5`
 - Anchor point: `TopCenter`
 - State threshold: `3`
-- Size sanity filter: enabled
+- min_hits: `3`
+- Size sanity filter: enabled (see size_sanity block above)
 - Output video: enabled
+- Output video path: `outputs/counting_result_3s.mp4`
+- Output video codec: `mp4v`
+
 
 Selected environment variables can override runtime paths/settings for quick
 testing, including `VIDEO_PATH`, `MODEL_PATH`, `OUTPUT_VIDEO_PATH`, `MIN_HITS`,
 and `JPEG_QUALITY`.
+
+**Note:** The requirements.txt now pins `numpy<2.0.0` due to compatibility issues with OpenCV and other modules. If you see errors about NumPy 2.x, ensure you are using the correct requirements file.
 
 ## Docker Details
 

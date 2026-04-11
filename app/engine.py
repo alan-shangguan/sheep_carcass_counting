@@ -96,10 +96,11 @@ OUTPUT_VIDEO_WRITE_WHEN_PAUSED: bool = CONFIG.output_video.write_when_paused
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _load_model(state: SharedState):
+def _load_model(state: SharedState) -> OpenVINOTracker | None:
     """
-    Attempt to load an OpenVINO tracker model. Returns the model object on
-    success, or None when the runtime or weights are unavailable.
+    Attempt to load an OpenVINO tracker model.
+    Returns:
+        OpenVINOTracker instance on success, or None when the runtime or weights are unavailable.
     Updates state.status_text with the outcome.
     """
     try:
@@ -125,8 +126,9 @@ def _load_model(state: SharedState):
 
 def _open_video(state: SharedState, video_path: str) -> cv2.VideoCapture | None:
     """
-    Try to open the configured video file.  Returns a VideoCapture object
-    that isOpened(), or None on failure.
+    Try to open the configured video file.
+    Returns:
+        cv2.VideoCapture object that isOpened(), or None on failure.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -138,17 +140,25 @@ def _open_video(state: SharedState, video_path: str) -> cv2.VideoCapture | None:
 
 
 def _reset_model_tracking(model: OpenVINOTracker | None, reason: str) -> None:
+    """
+    Reset the model's internal tracking state, if model is not None.
+    Logs the reset event with the provided reason.
+    """
     if model is None:
         return
+    import traceback
     try:
         model.reset()
         log_event("tracker_reset", reason=reason)
     except Exception as exc:
-        log_event("tracker_reset_failed", reason=reason, error=str(exc))
+        tb = traceback.format_exc()
+        log_event("tracker_reset_failed", reason=reason, error=str(exc), traceback=tb)
 
 
 def _placeholder_frame(message: str) -> np.ndarray:
-    """Return a plain dark frame with a centred status message."""
+    """
+    Return a plain dark frame with a centred status message.
+    """
     frame = np.zeros(
         (CONFIG.stream.placeholder_height, CONFIG.stream.placeholder_width, 3),
         dtype=np.uint8,
@@ -165,7 +175,11 @@ def _first_frame_preview_jpeg(
     runtime_jpeg_quality: int,
     overlay_lines: list[str],
 ) -> tuple[bytes, int, int] | None:
-    """Return an annotated JPEG preview of frame 0 without advancing playback."""
+    """
+    Return an annotated JPEG preview of frame 0 without advancing playback.
+    Returns:
+        Tuple of (JPEG bytes, width, height) or None on failure.
+    """
     preview_cap = cv2.VideoCapture(video_path)
     try:
         if not preview_cap.isOpened():
@@ -201,7 +215,9 @@ def _put_text(
     colour: tuple[int, int, int],
     thickness: int,
 ) -> None:
-    """Draw high-contrast text for recorded output and MJPEG preview."""
+    """
+    Draw high-contrast text for recorded output and MJPEG preview.
+    """
     cv2.putText(
         frame,
         text,
@@ -232,7 +248,9 @@ def _draw_gate(
     thickness: int,
     flash: bool = False,
 ) -> None:
-    """Overlay configured ordered tripwire polylines on the frame in-place."""
+    """
+    Overlay configured ordered tripwire polylines on the frame in-place.
+    """
     h, w = frame.shape[:2]
     colour = (0, 0, 255) if flash else ((0, 255, 0) if active else (0, 200, 200))
 
@@ -246,7 +264,9 @@ def _draw_gate(
 
 
 def _draw_config_overlay(frame: np.ndarray, lines: list[str]) -> None:
-    """Render runtime state lines as a compact overlay."""
+    """
+    Render runtime state lines as a compact overlay.
+    """
     if not lines:
         return
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -280,7 +300,11 @@ def _open_output_writer(
     frame_h: int,
     fps: float,
 ) -> cv2.VideoWriter | None:
-    """Create the annotated output video writer, if enabled and possible."""
+    """
+    Create the annotated output video writer, if enabled and possible.
+    Returns:
+        cv2.VideoWriter instance or None if not enabled or failed.
+    """
     if not OUTPUT_VIDEO_ENABLED:
         return None
 
@@ -294,7 +318,9 @@ def _open_output_writer(
 
 
 def _resolve_output_video_path(video_path: str) -> Path:
-    """Derive output render path from configured template and active input video."""
+    """
+    Derive output render path from configured template and active input video.
+    """
     template = Path(OUTPUT_VIDEO_PATH_TEMPLATE)
     input_stem = Path(video_path).stem or "video"
     suffix = template.suffix or ".mp4"
@@ -310,6 +336,8 @@ def _extract_tracks(tracked_objects) -> list[dict]:
     """
     Convert OpenVINO tracker objects into the track schema expected by
     counter.process_frame().
+    Returns:
+        List of dicts with 'id' and 'bbox' keys.
     """
     if not tracked_objects:
         return []
@@ -324,7 +352,9 @@ def _extract_tracks(tracked_objects) -> list[dict]:
 
 
 def _draw_tracked_objects(frame: np.ndarray, tracked_objects, frame_w: int, frame_h: int) -> None:
-    """Draw tracked boxes, marking size-sanity rejects visibly."""
+    """
+    Draw tracked boxes, marking size-sanity rejects visibly.
+    """
     if not tracked_objects:
         return
 
@@ -343,7 +373,9 @@ def _draw_tracked_objects(frame: np.ndarray, tracked_objects, frame_w: int, fram
 
 
 def _passes_size_sanity(bbox: tuple[float, float, float, float], frame_w: int, frame_h: int) -> bool:
-    """Return True when a tracked box falls inside the configured size/aspect envelope."""
+    """
+    Return True when a tracked box falls inside the configured size/aspect envelope.
+    """
     if not CONFIG.counter.size_sanity_enabled:
         return True
 
@@ -367,7 +399,11 @@ def _passes_size_sanity(bbox: tuple[float, float, float, float], frame_w: int, f
 
 
 def _filter_tracks_for_counting(tracks: list[dict], frame_w: int, frame_h: int) -> list[dict]:
-    """Filter tracked objects using the configured size sanity envelope."""
+    """
+    Filter tracked objects using the configured size sanity envelope.
+    Returns:
+        List of tracks passing the size sanity check.
+    """
     return [track for track in tracks if _passes_size_sanity(track["bbox"], frame_w, frame_h)]
 
 
@@ -736,8 +772,26 @@ def run_engine(state: SharedState) -> None:
                             log_event("crossing", video_path=current_video_path, **last_event)
                 except Exception as exc:
                     # Inference errors must not crash the stream.
+                    import traceback
+                    tb = traceback.format_exc()
                     last_inference_error = f"Inference error: {exc}"
-                    log_event("inference_error", frame=frame_index, error=str(exc), video_path=current_video_path)
+                    log_event(
+                        "inference_error",
+                        frame=frame_index,
+                        error=str(exc),
+                        traceback=tb,
+                        video_path=current_video_path,
+                        model_state=repr(model),
+                        runtime_conf_threshold=runtime_conf_threshold,
+                        runtime_iou_threshold=runtime_iou_threshold,
+                        runtime_skip_frame=runtime_skip_frame,
+                        runtime_min_hits=runtime_min_hits,
+                        runtime_state_threshold=runtime_state_threshold,
+                        runtime_polylines=runtime_polylines,
+                        runtime_crossing_directions=runtime_crossing_directions,
+                        runtime_crossing_order=runtime_crossing_order,
+                        runtime_anchor_point=runtime_anchor_point,
+                    )
             else:
                 # Mock mode: no inference, no counting.
                 last_inference_error = "Mock mode - no model"
