@@ -16,5 +16,5 @@ torch>=2.0.0
 numpy>=1.24.0
 
 # OpenVINO CPU runtime (no GPU/NPU support)
-openvino-cpu>=2024.0.0
+openvino>=2024.0.0
 
