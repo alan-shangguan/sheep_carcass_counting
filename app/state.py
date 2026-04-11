@@ -17,6 +17,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from app.runtime_logging import log_event
+
 
 @dataclass
 class SharedState:
@@ -95,9 +97,14 @@ class SharedState:
     runtime_iou_threshold: float = 0.45
     runtime_skip_frame: int = 1
     runtime_polylines: list[list[tuple[float, float]]] = field(default_factory=list)
+    runtime_crossing_directions: list[str] = field(default_factory=list)
+    runtime_crossing_order: list[int] = field(default_factory=list)
+    runtime_anchor_point: str = "topcenter"
     runtime_min_hits: int = 3
     runtime_state_threshold: int = 3
     runtime_reverse_decrease_counting: bool = False
+    runtime_gate_thickness: int = 5
+    runtime_jpeg_quality: int = 80
 
     # ------------------------------------------------------------------ #
     # Per-track counting memory – owned by engine/counter, cleared on     #
@@ -132,6 +139,13 @@ class SharedState:
             }
             self.next_event_id += 1
             self.event_history.append(event)
+        log_event(
+            "state_event",
+            event_id=event["id"],
+            state_event_type=event_type,
+            payload=event["payload"],
+            ts=event["ts"],
+        )
 
     def update_loop_metrics(self, *, frame_processed: bool, inference_latency_ms: float | None = None) -> None:
         """Update FPS and inference latency metrics from the engine loop."""
@@ -184,9 +198,14 @@ class SharedState:
                 "runtime_iou_threshold": self.runtime_iou_threshold,
                 "runtime_skip_frame": self.runtime_skip_frame,
                 "runtime_polylines": [list(polyline) for polyline in self.runtime_polylines],
+                "runtime_crossing_directions": list(self.runtime_crossing_directions),
+                "runtime_crossing_order": list(self.runtime_crossing_order),
+                "runtime_anchor_point": self.runtime_anchor_point,
                 "runtime_min_hits": self.runtime_min_hits,
                 "runtime_state_threshold": self.runtime_state_threshold,
                 "runtime_reverse_decrease_counting": self.runtime_reverse_decrease_counting,
+                "runtime_gate_thickness": self.runtime_gate_thickness,
+                "runtime_jpeg_quality": self.runtime_jpeg_quality,
                 "uptime_seconds": max(0.0, time.time() - self.started_at),
             }
 

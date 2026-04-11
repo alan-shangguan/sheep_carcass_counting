@@ -59,6 +59,8 @@ import cv2
 import numpy as np
 
 from app.config import load_config
+from app.openvino_inference import OpenVINOTracker
+from app.runtime_logging import log_event
 from app.state import SharedState
 from app import counter as counter_module
 
@@ -85,21 +87,10 @@ MODEL_CONF_THRESHOLD: float = float(CONFIG.model.conf_threshold)
 MODEL_IOU_THRESHOLD: float = float(CONFIG.model.iou_threshold)
 JPEG_QUALITY: int = int(os.environ.get("JPEG_QUALITY", str(CONFIG.stream.jpeg_quality)))
 OUTPUT_VIDEO_ENABLED: bool = CONFIG.output_video.enabled
-OUTPUT_VIDEO_PATH: str = os.environ.get("OUTPUT_VIDEO_PATH", CONFIG.output_video.path)
+OUTPUT_VIDEO_PATH_TEMPLATE: str = os.environ.get("OUTPUT_VIDEO_PATH", CONFIG.output_video.path)
 OUTPUT_VIDEO_CODEC: str = CONFIG.output_video.codec
 OUTPUT_VIDEO_FPS: float | None = CONFIG.output_video.fps
 OUTPUT_VIDEO_WRITE_WHEN_PAUSED: bool = CONFIG.output_video.write_when_paused
-
-# ---------------------------------------------------------------------------
-# YOLO availability check
-# ---------------------------------------------------------------------------
-
-try:
-    from ultralytics import YOLO as _YOLO  # noqa: N812
-    _YOLO_AVAILABLE = True
-except ImportError:
-    _YOLO_AVAILABLE = False
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,40 +98,53 @@ except ImportError:
 
 def _load_model(state: SharedState):
     """
-    Attempt to load a YOLO model.  Returns the model object on success, or
-    None when ultralytics is not installed or the weights file is missing.
+    Attempt to load an OpenVINO tracker model. Returns the model object on
+    success, or None when the runtime or weights are unavailable.
     Updates state.status_text with the outcome.
     """
-    if not _YOLO_AVAILABLE:
-        with state.lock:
-            state.status_text = "YOLO not installed – running in mock/preview mode"
-        return None
-
     try:
-        if CONFIG.model.task:
-            model = _YOLO(MODEL_PATH, task=CONFIG.model.task)
-        else:
-            model = _YOLO(MODEL_PATH)
+        model = OpenVINOTracker(
+            model_path=MODEL_PATH,
+            conf_threshold=MODEL_CONF_THRESHOLD,
+            iou_threshold=MODEL_IOU_THRESHOLD,
+            classes=MODEL_CLASSES,
+            device="CPU",
+            track_min_hits=1,
+            track_iou_threshold=0.1,
+        )
         with state.lock:
             state.status_text = f"Model loaded: {MODEL_PATH}"
+            state.model_ready = True
         return model
     except Exception as exc:
         with state.lock:
             state.status_text = f"Model load failed ({exc}) – mock/preview mode"
+            state.model_ready = False
         return None
 
 
-def _open_video(state: SharedState) -> cv2.VideoCapture | None:
+def _open_video(state: SharedState, video_path: str) -> cv2.VideoCapture | None:
     """
     Try to open the configured video file.  Returns a VideoCapture object
     that isOpened(), or None on failure.
     """
-    cap = cv2.VideoCapture(VIDEO_PATH)
+    cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         with state.lock:
-            state.status_text = f"Cannot open video: {VIDEO_PATH}"
+            state.status_text = f"Cannot open video: {video_path}"
+        log_event("video_open_failed", video_path=video_path)
         return None
     return cap
+
+
+def _reset_model_tracking(model: OpenVINOTracker | None, reason: str) -> None:
+    if model is None:
+        return
+    try:
+        model.reset()
+        log_event("tracker_reset", reason=reason)
+    except Exception as exc:
+        log_event("tracker_reset_failed", reason=reason, error=str(exc))
 
 
 def _placeholder_frame(message: str) -> np.ndarray:
@@ -184,16 +188,23 @@ def _put_text(
     )
 
 
-def _draw_gate(frame: np.ndarray, active: bool, flash: bool = False) -> None:
+def _draw_gate(
+    frame: np.ndarray,
+    active: bool,
+    polylines: list[list[tuple[float, float]]],
+    crossing_order: list[int],
+    thickness: int,
+    flash: bool = False,
+) -> None:
     """Overlay configured ordered tripwire polylines on the frame in-place."""
     h, w = frame.shape[:2]
     colour = (0, 0, 255) if flash else ((0, 255, 0) if active else (0, 200, 200))
 
-    for index, polyline in enumerate(TRIPWIRE_POLYLINES, start=1):
+    for index, polyline in enumerate(polylines, start=1):
         p1 = (int(polyline[0][0] * w), int(polyline[0][1] * h))
         p2 = (int(polyline[1][0] * w), int(polyline[1][1] * h))
-        line_colour = colour if index in TRIPWIRE_CROSSING_ORDER else (160, 160, 160)
-        cv2.line(frame, p1, p2, line_colour, 2)
+        line_colour = colour if index in crossing_order else (160, 160, 160)
+        cv2.line(frame, p1, p2, line_colour, thickness)
         label_pos = (p1[0] + 4, max(20, p1[1] + 16))
         _put_text(frame, f"G{index}", label_pos, 0.9, line_colour, 2)
 
@@ -240,6 +251,7 @@ def _draw_config_overlay(frame: np.ndarray) -> None:
 
 
 def _open_output_writer(
+    output_path: Path,
     frame_w: int,
     frame_h: int,
     fps: float,
@@ -248,7 +260,6 @@ def _open_output_writer(
     if not OUTPUT_VIDEO_ENABLED:
         return None
 
-    output_path = Path(OUTPUT_VIDEO_PATH)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fourcc = cv2.VideoWriter_fourcc(*OUTPUT_VIDEO_CODEC)
@@ -258,28 +269,47 @@ def _open_output_writer(
     return writer
 
 
-def _extract_tracks(results) -> list[dict]:
+def _resolve_output_video_path(video_path: str) -> Path:
+    """Derive output render path from configured template and active input video."""
+    template = Path(OUTPUT_VIDEO_PATH_TEMPLATE)
+    input_stem = Path(video_path).stem or "video"
+    suffix = template.suffix or ".mp4"
+
+    if "{video}" in str(template):
+        return Path(str(template).replace("{video}", input_stem))
+
+    base_dir = template.parent if str(template.parent) not in ("", ".") else Path("outputs")
+    return base_dir / f"{input_stem}{suffix}"
+
+
+def _extract_tracks(tracked_objects) -> list[dict]:
     """
-    Parse ultralytics Results into a list of track dicts compatible with
+    Convert OpenVINO tracker objects into the track schema expected by
     counter.process_frame().
-
-    Returns an empty list when no boxes or no tracking IDs are present.
     """
-    tracks: list[dict] = []
-    if not results or results[0].boxes is None:
-        return tracks
+    if not tracked_objects:
+        return []
 
-    boxes = results[0].boxes
-    if boxes.id is None:
-        return tracks
+    return [
+        {
+            "id": int(obj.track_id),
+            "bbox": (float(obj.x1), float(obj.y1), float(obj.x2), float(obj.y2)),
+        }
+        for obj in tracked_objects
+    ]
 
-    ids = boxes.id.int().tolist()
-    xyxy = boxes.xyxy.tolist()
 
-    for tid, bbox in zip(ids, xyxy):
-        tracks.append({"id": tid, "bbox": tuple(bbox)})
+def _draw_tracked_objects(frame: np.ndarray, tracked_objects) -> None:
+    """Draw tracked bounding boxes and IDs in-place for preview/output."""
+    if not tracked_objects:
+        return
 
-    return tracks
+    for obj in tracked_objects:
+        x1, y1, x2, y2 = int(obj.x1), int(obj.y1), int(obj.x2), int(obj.y2)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        label = f"ID:{int(obj.track_id)} {float(obj.conf):.2f}"
+        label_top = max(24, y1)
+        _put_text(frame, label, (x1 + 2, label_top - 4), 0.7, (0, 255, 0), 2)
 
 
 def _passes_size_sanity(bbox: tuple[float, float, float, float], frame_w: int, frame_h: int) -> bool:
@@ -330,21 +360,31 @@ def run_engine(state: SharedState) -> None:
     7.  Encode to JPEG and store in shared state (brief lock).
     8.  Sleep to honour the source video's frame rate.
     """
+    with state.lock:
+        state.engine_thread_alive = True
+
     model = _load_model(state)
     cap: cv2.VideoCapture | None = None
     output_writer: cv2.VideoWriter | None = None
     output_writer_failed = False
     output_writer_released = False
+    current_output_video_path: Path | None = None
     frame_index = 0
+    current_video_path = VIDEO_PATH
     gate_flash_frames_remaining = 0
     last_crossing_text = ""
+    last_inference_error = ""
     inference_runs = 0
+    last_pause_state = False
 
     # Target frame interval; updated once the video is opened.
     target_frame_time: float = 1.0 / 25.0
 
     while True:
         t_iter_start = time.perf_counter()
+
+        switch_to_video: str | None = None
+        restart_video = False
 
         # ------------------------------------------------------------------ #
         # 1. Handle reset (momentary flag)                                    #
@@ -356,29 +396,128 @@ def run_engine(state: SharedState) -> None:
                 state.reset_requested = False
                 # Status reverts to the current running mode.
                 state.status_text = "Running" if state.running else "Idle"
+                _reset_model_tracking(model, "reset_requested")
 
         # ------------------------------------------------------------------ #
         # 2. Snapshot control flags                                            #
         # ------------------------------------------------------------------ #
         with state.lock:
             running = state.running
+            video_paused = state.video_paused
+            if state.requested_video_path and state.requested_video_path != current_video_path:
+                switch_to_video = state.requested_video_path
+                state.requested_video_path = None
+            restart_video = bool(state.restart_video_requested)
+            if state.restart_video_requested:
+                state.restart_video_requested = False
+            runtime_conf_threshold = float(state.runtime_conf_threshold)
+            runtime_iou_threshold = float(state.runtime_iou_threshold)
+            runtime_skip_frame = max(1, int(state.runtime_skip_frame))
+            runtime_polylines = [list(polyline) for polyline in state.runtime_polylines] or TRIPWIRE_POLYLINES
+            runtime_crossing_directions = list(state.runtime_crossing_directions) or TRIPWIRE_CROSSING_DIRECTIONS
+            runtime_crossing_order = list(state.runtime_crossing_order) or TRIPWIRE_CROSSING_ORDER
+            runtime_anchor_point = str(state.runtime_anchor_point).lower() or TRIPWIRE_ANCHOR_POINT
+            runtime_min_hits = int(state.runtime_min_hits)
+            runtime_state_threshold = int(state.runtime_state_threshold)
+            runtime_reverse_decrease_counting = bool(state.runtime_reverse_decrease_counting)
+            runtime_gate_thickness = max(1, int(state.runtime_gate_thickness))
+            runtime_jpeg_quality = max(20, min(100, int(state.runtime_jpeg_quality)))
+
+        if video_paused != last_pause_state:
+            if video_paused:
+                _reset_model_tracking(model, "video_paused")
+                log_event("video_pause_applied", video_path=current_video_path, frame=frame_index)
+            else:
+                log_event("video_resume_applied", video_path=current_video_path, frame=frame_index)
+            last_pause_state = video_paused
+
+        if model is not None:
+            model.detector.conf_threshold = runtime_conf_threshold
+            model.detector.iou_threshold = runtime_iou_threshold
+
+        if switch_to_video is not None:
+            current_video_path = switch_to_video
+            if cap is not None and cap.isOpened():
+                cap.release()
+            cap = None
+            if output_writer is not None and not output_writer_released:
+                output_writer.release()
+            output_writer = None
+            output_writer_failed = False
+            output_writer_released = False
+            current_output_video_path = None
+            frame_index = 0
+            inference_runs = 0
+            _reset_model_tracking(model, "video_switched")
+            with state.lock:
+                state.current_video_path = current_video_path
+                state.count = 0
+                state.track_memory.clear()
+                state.status_text = f"Switched video: {current_video_path}"
+            log_event("video_switched", video_path=current_video_path)
+
+        if restart_video and cap is not None and cap.isOpened():
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            if output_writer is not None and not output_writer_released:
+                output_writer.release()
+            output_writer = None
+            output_writer_failed = False
+            output_writer_released = False
+            current_output_video_path = None
+            frame_index = 0
+            inference_runs = 0
+            _reset_model_tracking(model, "video_restarted")
+            with state.lock:
+                state.current_video_path = current_video_path
+                state.count = 0
+                state.track_memory.clear()
+                state.status_text = f"Restarted video: {current_video_path}"
+            log_event("video_restarted", video_path=current_video_path)
+
+        if video_paused:
+            overlay_lines = [
+                "State: Paused",
+                f"Video: {current_video_path}",
+                f"Conf/IoU: {runtime_conf_threshold:.2f}/{runtime_iou_threshold:.2f}",
+                f"SkipFrame: {runtime_skip_frame}",
+                f"Anchor: {runtime_anchor_point}",
+                f"Directions: {'/'.join(runtime_crossing_directions)}",
+                f"Order: {runtime_crossing_order}",
+                f"MinHits/StateThreshold: {runtime_min_hits}/{runtime_state_threshold}",
+            ]
+            if last_crossing_text:
+                overlay_lines.append(last_crossing_text)
+            if last_inference_error:
+                overlay_lines.append(last_inference_error)
+            with state.lock:
+                # Keep the latest computed visual result visible while paused,
+                # without reading new frames or running inference.
+                if state.latest_jpeg is not None:
+                    state.latest_frame_ts = time.time()
+                state.frame_overlay_lines = overlay_lines
+            time.sleep(min(target_frame_time, 0.05))
+            continue
 
         # ------------------------------------------------------------------ #
         # 3. Ensure video capture is open                                     #
         # ------------------------------------------------------------------ #
         if cap is None or not cap.isOpened():
-            cap = _open_video(state)
+            cap = _open_video(state, current_video_path)
             if cap is None:
                 # Emit a placeholder frame so /stream stays alive.
-                ph = _placeholder_frame(f"Waiting for video: {VIDEO_PATH}")
+                ph = _placeholder_frame(f"Waiting for video: {current_video_path}")
                 _, jpeg_buf = cv2.imencode(
-                    ".jpg", ph, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+                    ".jpg", ph, [cv2.IMWRITE_JPEG_QUALITY, runtime_jpeg_quality]
                 )
                 with state.lock:
                     state.latest_jpeg = jpeg_buf.tobytes()
                     state.latest_frame_ts = time.time()
+                    state.current_video_path = current_video_path
+                log_event("video_waiting", video_path=current_video_path)
                 time.sleep(1.0)
                 continue
+            with state.lock:
+                state.current_video_path = current_video_path
 
             # Read FPS from the file; fall back to 25 if unavailable.
             fps = cap.get(cv2.CAP_PROP_FPS)
@@ -391,18 +530,25 @@ def run_engine(state: SharedState) -> None:
         ret, frame = cap.read()
         if not ret:
             if CONFIG.video.loop:
+                _reset_model_tracking(model, "video_loop")
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                print({"event": "video_loop", "video_path": VIDEO_PATH}, flush=True)
+                log_event("video_loop", video_path=current_video_path)
             else:
                 if output_writer is not None and not output_writer_released:
                     output_writer.release()
                     output_writer_released = True
                 with state.lock:
                     if OUTPUT_VIDEO_ENABLED:
-                        state.status_text = f"Video ended. Output saved to {OUTPUT_VIDEO_PATH}"
+                        rendered_path = str(current_output_video_path) if current_output_video_path else "(not generated)"
+                        state.status_text = f"Video ended. Output saved to {rendered_path}"
                     else:
-                        state.status_text = f"Video ended: {VIDEO_PATH}"
-                print({"event": "video_end", "video_path": VIDEO_PATH, "output_path": OUTPUT_VIDEO_PATH}, flush=True)
+                        state.status_text = f"Video ended: {current_video_path}"
+                    state.current_video_path = current_video_path
+                log_event(
+                    "video_end",
+                    video_path=current_video_path,
+                    output_path=str(current_output_video_path) if current_output_video_path else None,
+                )
                 time.sleep(0.25)
             continue
 
@@ -410,72 +556,68 @@ def run_engine(state: SharedState) -> None:
 
         frame_h, frame_w = frame.shape[:2]
         if output_writer is None and not output_writer_failed and not output_writer_released:
+            current_output_video_path = _resolve_output_video_path(current_video_path)
             writer_fps = OUTPUT_VIDEO_FPS if OUTPUT_VIDEO_FPS and OUTPUT_VIDEO_FPS > 0 else (1.0 / target_frame_time)
-            output_writer = _open_output_writer(frame_w, frame_h, writer_fps)
+            output_writer = _open_output_writer(current_output_video_path, frame_w, frame_h, writer_fps)
             if OUTPUT_VIDEO_ENABLED and output_writer is None:
                 output_writer_failed = True
                 with state.lock:
-                    state.status_text = f"Output video open failed: {OUTPUT_VIDEO_PATH}"
-                print({"event": "output_writer_failed", "output_path": OUTPUT_VIDEO_PATH}, flush=True)
+                    state.status_text = f"Output video open failed: {current_output_video_path}"
+                log_event("output_writer_failed", output_path=str(current_output_video_path))
             elif output_writer is not None:
-                print(
-                    {
-                        "event": "output_writer_opened",
-                        "output_path": OUTPUT_VIDEO_PATH,
-                        "fps": writer_fps,
-                        "frame_size": [frame_w, frame_h],
-                    },
-                    flush=True,
+                log_event(
+                    "output_writer_opened",
+                    output_path=str(current_output_video_path),
+                    fps=writer_fps,
+                    frame_size=[frame_w, frame_h],
                 )
 
         # ------------------------------------------------------------------ #
         # 5. Inference + counting (no lock held across inference)              #
         # ------------------------------------------------------------------ #
         count_increment = 0
+        inference_latency_ms: float | None = None
 
         if running:
             if model is not None:
                 try:
                     # Run detection/tracking on one frame out of every SKIP_FRAME.
-                    if (frame_index - 1) % SKIP_FRAME == 0:
+                    if (frame_index - 1) % runtime_skip_frame == 0:
+                        infer_start = time.perf_counter()
                         inference_runs += 1
-                        results = model.track(
-                            frame,
-                            persist=CONFIG.model.persist_tracking,
-                            verbose=CONFIG.model.verbose,
-                            classes=MODEL_CLASSES,
-                            conf=MODEL_CONF_THRESHOLD,
-                            iou=MODEL_IOU_THRESHOLD,
-                        )
-                        # Use the annotated frame produced by ultralytics.
-                        frame = results[0].plot()
+                        tracked_objects = model(frame)
+                        inference_latency_ms = (time.perf_counter() - infer_start) * 1000.0
+                        if tracked_objects:
+                            _draw_tracked_objects(frame, tracked_objects)
 
                         # Extract track list and run gate counter.
-                        raw_tracks = _extract_tracks(results)
+                        raw_tracks = _extract_tracks(tracked_objects)
                         tracks = _filter_tracks_for_counting(raw_tracks, frame_w, frame_h)
                         count_increment = counter_module.process_frame(
                             tracks,
                             state.track_memory,   # mutated in-place; engine owns it
                             frame_w,
                             frame_h,
-                            polylines=TRIPWIRE_POLYLINES,
-                            crossing_directions=TRIPWIRE_CROSSING_DIRECTIONS,
-                            crossing_order=TRIPWIRE_CROSSING_ORDER,
+                            polylines=runtime_polylines,
+                            crossing_directions=runtime_crossing_directions,
+                            crossing_order=runtime_crossing_order,
                             unit=TRIPWIRE_UNIT,
-                            anchor_point=TRIPWIRE_ANCHOR_POINT,
-                            min_hits=MIN_HITS,
-                            state_threshold=TRIPWIRE_STATE_THRESHOLD,
+                            anchor_point=runtime_anchor_point,
+                            min_hits=runtime_min_hits,
+                            state_threshold=runtime_state_threshold,
                         )
-                        print(
-                            {
-                                "event": "inference",
-                                "frame": frame_index,
-                                "inference_run": inference_runs,
-                                "raw_tracks": len(raw_tracks),
-                                "filtered_tracks": len(tracks),
-                                "count_increment": count_increment,
-                            },
-                            flush=True,
+                        if count_increment < 0 and not runtime_reverse_decrease_counting:
+                            count_increment = 0
+                        log_event(
+                            "inference",
+                            frame=frame_index,
+                            inference_run=inference_runs,
+                            raw_tracks=len(raw_tracks),
+                            filtered_tracks=len(tracks),
+                            count_increment=count_increment,
+                            conf_threshold=runtime_conf_threshold,
+                            iou_threshold=runtime_iou_threshold,
+                            video_path=current_video_path,
                         )
                         if count_increment != 0:
                             last_event = state.track_memory.get("__last_event__", {})
@@ -489,14 +631,14 @@ def run_engine(state: SharedState) -> None:
                                 f"{event_first}->{event_last}"
                             )
                             gate_flash_frames_remaining = max(2, SKIP_FRAME)
-                            print({"event": "crossing", **last_event}, flush=True)
+                            log_event("crossing", video_path=current_video_path, **last_event)
                 except Exception as exc:
                     # Inference errors must not crash the stream.
-                    _put_text(frame, f"Inference error: {exc}", (10, 45), 1.0, (0, 0, 255), 2)
-                    print({"event": "inference_error", "frame": frame_index, "error": str(exc)}, flush=True)
+                    last_inference_error = f"Inference error: {exc}"
+                    log_event("inference_error", frame=frame_index, error=str(exc), video_path=current_video_path)
             else:
                 # Mock mode: no inference, no counting.
-                _put_text(frame, "MOCK MODE - no YOLO model", (10, 45), 1.1, (0, 120, 255), 2)
+                last_inference_error = "Mock mode - no model"
 
         # ------------------------------------------------------------------ #
         # 6. Annotate frame                                                    #
@@ -504,38 +646,45 @@ def run_engine(state: SharedState) -> None:
 
         # Gate line (green when running, cyan when paused).
         gate_flash_active = gate_flash_frames_remaining > 0
-        _draw_gate(frame, running, flash=gate_flash_active)
-
-        # Running / paused banner.
-        if not running:
-            _put_text(frame, "PAUSED", (10, 50), 1.6, (0, 220, 220), 3)
+        _draw_gate(
+            frame,
+            running,
+            runtime_polylines,
+            runtime_crossing_order,
+            runtime_gate_thickness,
+            flash=gate_flash_active,
+        )
 
         # Count overlay (always visible).
         with state.lock:
             state.count += count_increment
             count_display = state.count
 
-        if frame_index % max(30, SKIP_FRAME * 10) == 0:
-            print(
-                {
-                    "event": "heartbeat",
-                    "frame": frame_index,
-                    "running": running,
-                    "count": count_display,
-                    "inference_runs": inference_runs,
-                },
-                flush=True,
+        if frame_index % max(30, runtime_skip_frame * 10) == 0:
+            log_event(
+                "heartbeat",
+                frame=frame_index,
+                running=running,
+                count=count_display,
+                inference_runs=inference_runs,
+                video_path=current_video_path,
+                video_paused=video_paused,
             )
 
-        _put_text(frame, f"Count: {count_display}", (10, frame_h - 24), 1.8, (255, 255, 0), 4)
-        if running and SKIP_FRAME > 1:
-            _put_text(frame, f"SkipFrame: {SKIP_FRAME}", (10, 90), 1.0, (255, 255, 255), 2)
-        if running:
-            _put_text(frame, f"Conf: {MODEL_CONF_THRESHOLD:.2f} IoU: {MODEL_IOU_THRESHOLD:.2f}", (10, 135), 1.0, (255, 255, 255), 2)
+        overlay_lines = [
+            f"State: {'Running' if running else 'Paused'}",
+            f"Video: {current_video_path}",
+            f"Conf/IoU: {runtime_conf_threshold:.2f}/{runtime_iou_threshold:.2f}",
+            f"SkipFrame: {runtime_skip_frame}",
+            f"Anchor: {runtime_anchor_point}",
+            f"Directions: {'/'.join(runtime_crossing_directions)}",
+            f"Order: {runtime_crossing_order}",
+            f"MinHits/StateThreshold: {runtime_min_hits}/{runtime_state_threshold}",
+        ]
         if last_crossing_text:
-            event_colour = (0, 0, 255) if gate_flash_active else (255, 255, 255)
-            _put_text(frame, last_crossing_text, (10, 180), 1.0, event_colour, 2)
-        _draw_config_overlay(frame)
+            overlay_lines.append(last_crossing_text)
+        if last_inference_error:
+            overlay_lines.append(last_inference_error)
         if gate_flash_frames_remaining > 0:
             gate_flash_frames_remaining -= 1
 
@@ -546,12 +695,18 @@ def run_engine(state: SharedState) -> None:
         # 7. Encode to JPEG and store                                          #
         # ------------------------------------------------------------------ #
         ok, jpeg_buf = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, runtime_jpeg_quality]
         )
         if ok:
             with state.lock:
                 state.latest_jpeg = jpeg_buf.tobytes()
                 state.latest_frame_ts = time.time()
+                state.frame_overlay_lines = overlay_lines
+
+        state.update_loop_metrics(
+            frame_processed=True,
+            inference_latency_ms=inference_latency_ms,
+        )
 
         # ------------------------------------------------------------------ #
         # 8. Frame-rate throttle                                               #

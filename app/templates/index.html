@@ -400,26 +400,6 @@
       letter-spacing: 0.5px;
     }
 
-    .overlay-body {
-      max-height: 220px;
-      overflow-y: auto;
-      padding: 8px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      font-family: 'Courier New', monospace;
-      font-size: 0.75rem;
-      color: var(--text-primary);
-    }
-
-    .overlay-line {
-      padding: 6px 8px;
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      background: var(--bg-tertiary);
-      overflow-wrap: anywhere;
-    }
-
     .runtime-controls {
       display: grid;
       grid-template-columns: repeat(4, minmax(90px, 1fr));
@@ -709,8 +689,7 @@
             <button class="btn-reset" onclick="selectVideoFile()">Upload Video From PC</button>
             <button class="btn-reset" onclick="restartCurrentVideo()">Restart Video From Beginning</button>
             <button class="btn-stop" id="btn-video-pause" onclick="toggleVideoPause()">Pause Video</button>
-            <button class="btn-start" onclick="sendCmd('start')">Start</button>
-            <button class="btn-stop" onclick="sendCmd('stop')">Stop</button>
+            <button class="btn-start" id="btn-run-toggle" data-running="false" onclick="toggleRunStop()">Start Counting</button>
             <button class="btn-reset" onclick="sendCmd('reset')">Reset Count</button>
             <div class="status-message" id="cmd-status"></div>
           </div>
@@ -718,7 +697,7 @@
 
         <div class="sidebar-col">
           <div class="overlay-panel">
-            <div class="overlay-header">Runtime Settings + Live Overlay</div>
+            <div class="overlay-header">Runtime Settings</div>
             <div class="runtime-controls">
               <div>
                 <label for="rt-conf">Conf</label>
@@ -740,13 +719,30 @@
                 <label for="rt-state-threshold">State Threshold</label>
                 <input id="rt-state-threshold" type="number" min="2" step="1" />
               </div>
+              <!-- Tripwire fields removed as requested -->
               <div>
-                <label for="rt-line1-y">Tripwire L1 Y</label>
-                <input id="rt-line1-y" type="number" min="0" max="1" step="0.01" />
+                <label for="rt-anchor">Anchor Point</label>
+                <select id="rt-anchor" style="width:100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.9rem;">
+                  <option value="topcenter">TopCenter</option>
+                  <option value="bottomcenter">BottomCenter</option>
+                  <option value="bottomright">BottomRight</option>
+                </select>
               </div>
               <div>
-                <label for="rt-line2-y">Tripwire L2 Y</label>
-                <input id="rt-line2-y" type="number" min="0" max="1" step="0.01" />
+                <label for="rt-directions">Directions (csv)</label>
+                <input id="rt-directions" type="text" placeholder="left-to-right,left-to-right" />
+              </div>
+              <div>
+                <label for="rt-order">Crossing Order (csv)</label>
+                <input id="rt-order" type="text" placeholder="1,2" />
+              </div>
+              <div>
+                <label for="rt-thickness">Tripwire Thickness</label>
+                <input id="rt-thickness" type="number" min="1" max="20" step="1" />
+              </div>
+              <div>
+                <label for="rt-jpeg">JPEG Quality</label>
+                <input id="rt-jpeg" type="number" min="20" max="100" step="1" />
               </div>
               <div>
                 <label for="rt-reverse">Reverse Decrease</label>
@@ -757,8 +753,9 @@
                 <span class="runtime-note">Effective immediately</span>
               </div>
             </div>
-            <div class="overlay-body" id="overlay-lines">
-              <div class="overlay-line">Waiting for frame overlay data...</div>
+            <div style="padding: 10px 12px 0 12px;">
+              <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:4px;">Live Runtime Settings (read-only):</div>
+              <pre id="runtime-settings-summary" style="background:var(--bg-tertiary); color:var(--text-primary); font-size:0.85rem; border-radius:6px; padding:8px; max-height:180px; overflow:auto; margin-bottom:0;"></pre>
             </div>
           </div>
 
@@ -817,11 +814,19 @@
         document.getElementById('rt-skip').value = String(runtime.skip_frame ?? 1);
         document.getElementById('rt-min-hits').value = String(runtime.min_hits ?? 3);
         document.getElementById('rt-state-threshold').value = String(runtime.state_threshold ?? 3);
+        document.getElementById('rt-anchor').value = String(runtime.anchor_point ?? 'topcenter');
+        document.getElementById('rt-directions').value = (runtime.crossing_directions || []).join(',');
+        document.getElementById('rt-order').value = (runtime.crossing_order || []).join(',');
+        document.getElementById('rt-thickness').value = String(runtime.gate_thickness ?? 5);
+        document.getElementById('rt-jpeg').value = String(runtime.jpeg_quality ?? 80);
         document.getElementById('rt-reverse').checked = Boolean(runtime.reverse_decrease_counting);
-        const polys = runtime.tripwire_polylines || [];
-        if (polys.length >= 2) {
-          document.getElementById('rt-line1-y').value = Number(polys[0][0][1]).toFixed(2);
-          document.getElementById('rt-line2-y').value = Number(polys[1][0][1]).toFixed(2);
+        // Tripwire fields removed from UI and logic
+        // Show all settings in the summary
+        const summaryEl = document.getElementById('runtime-settings-summary');
+        if (summaryEl) {
+          // Exclude tripwire_polylines from the summary
+          const { tripwire_polylines, ...rest } = runtime;
+          summaryEl.textContent = JSON.stringify(rest, null, 2);
         }
       } catch (err) {
         console.error('loadRuntimeSettings failed:', err);
@@ -837,6 +842,17 @@
       const stateThreshold = parseInt(document.getElementById('rt-state-threshold').value, 10);
       const line1Y = parseFloat(document.getElementById('rt-line1-y').value);
       const line2Y = parseFloat(document.getElementById('rt-line2-y').value);
+      const anchorPoint = document.getElementById('rt-anchor').value;
+      const directions = document.getElementById('rt-directions').value
+        .split(',')
+        .map(item => item.trim())
+        .filter(item => item.length > 0);
+      const crossingOrder = document.getElementById('rt-order').value
+        .split(',')
+        .map(item => parseInt(item.trim(), 10))
+        .filter(item => Number.isFinite(item));
+      const gateThickness = parseInt(document.getElementById('rt-thickness').value, 10);
+      const jpegQuality = parseInt(document.getElementById('rt-jpeg').value, 10);
       const reverseDecrease = document.getElementById('rt-reverse').checked;
 
       statusEl.textContent = 'Applying runtime settings...';
@@ -851,6 +867,11 @@
             min_hits: minHits,
             state_threshold: stateThreshold,
             reverse_decrease_counting: reverseDecrease,
+            anchor_point: anchorPoint,
+            crossing_directions: directions,
+            crossing_order: crossingOrder,
+            gate_thickness: gateThickness,
+            jpeg_quality: jpegQuality,
             line1_y: line1Y,
             line2_y: line2Y,
           }),
@@ -860,7 +881,7 @@
           statusEl.textContent = payload.error || 'Runtime settings update failed';
           return;
         }
-        statusEl.textContent = `Applied: conf=${payload.conf_threshold.toFixed(2)} iou=${payload.iou_threshold.toFixed(2)} skip=${payload.skip_frame} min_hits=${payload.min_hits}`;
+        statusEl.textContent = `Applied: conf=${payload.conf_threshold.toFixed(2)} iou=${payload.iou_threshold.toFixed(2)} skip=${payload.skip_frame} min_hits=${payload.min_hits} thickness=${payload.gate_thickness}`;
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
       } catch (err) {
         statusEl.textContent = 'Runtime settings update failed';
@@ -881,6 +902,27 @@
       } catch (err) {
         statusEl.textContent = 'Network error';
         console.error('Command failed:', err);
+      }
+    }
+
+    async function toggleRunStop() {
+      const statusEl = document.getElementById('cmd-status');
+      const btn = document.getElementById('btn-run-toggle');
+      const isRunning = btn.getAttribute('data-running') === 'true';
+      const cmd = isRunning ? 'stop' : 'start';
+
+      statusEl.textContent = isRunning ? 'Stopping counting...' : 'Starting counting...';
+      try {
+        const res = await fetch('/' + cmd, { method: 'POST' });
+        if (!res.ok) {
+          statusEl.textContent = `Error (${res.status})`;
+          return;
+        }
+        statusEl.textContent = isRunning ? 'Counting stopped' : 'Counting running';
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+      } catch (err) {
+        statusEl.textContent = 'Network error';
+        console.error('Toggle run/stop failed:', err);
       }
     }
 
@@ -1041,7 +1083,7 @@
           fetch('/ready')
         ]);
 
-        if (!stateRes.ok || !healthRes.ok || !readyRes.ok) throw new Error('HTTP error');
+        if (!stateRes.ok || !healthRes.ok) throw new Error('HTTP error');
 
         const state = await stateRes.json();
         const health = await healthRes.json();
@@ -1058,6 +1100,11 @@
           stateEl.className = 'state-badge stopped';
         }
 
+        const runToggleBtn = document.getElementById('btn-run-toggle');
+        runToggleBtn.textContent = state.running ? 'Stop Counting' : 'Start Counting';
+        runToggleBtn.setAttribute('data-running', state.running ? 'true' : 'false');
+        runToggleBtn.className = state.running ? 'btn-stop' : 'btn-start';
+
         const videoPauseBtn = document.getElementById('btn-video-pause');
         const paused = Boolean(state.video_paused);
         videoPauseBtn.textContent = paused ? 'Resume Video' : 'Pause Video';
@@ -1070,7 +1117,6 @@
         document.getElementById('val-latency').textContent = health.last_inference_latency_ms.toFixed(1);
         document.getElementById('val-uptime').textContent = Math.floor(health.uptime_seconds);
         document.getElementById('val-status').textContent = state.status;
-        updateFrameOverlayLines(state.frame_overlay_lines || []);
 
         // Update header health indicator
         const healthEl = document.getElementById('health-indicator');
@@ -1101,18 +1147,6 @@
         document.getElementById('health-indicator').className = 'status-indicator dead';
         document.getElementById('health-text').textContent = 'Connection Lost';
       }
-    }
-
-    function updateFrameOverlayLines(lines) {
-      const container = document.getElementById('overlay-lines');
-      if (!Array.isArray(lines) || lines.length === 0) {
-        container.innerHTML = '<div class="overlay-line">No overlay text available yet</div>';
-        return;
-      }
-
-      container.innerHTML = lines
-        .map(line => `<div class="overlay-line">${line}</div>`)
-        .join('');
     }
 
     /**

@@ -56,6 +56,12 @@ def _side_of_polyline(
 ) -> str:
     start = _pixel_point(polyline[0], frame_w, frame_h)
     end = _pixel_point(polyline[1], frame_w, frame_h)
+
+    # Canonicalize orientation so side labels stay stable regardless of
+    # point order in config (for example [right->left] vs [left->right]).
+    if (end[0] < start[0]) or (end[0] == start[0] and end[1] < start[1]):
+        start, end = end, start
+
     delta_x = end[0] - start[0]
     delta_y = end[1] - start[1]
     signed_area = (delta_x * (anchor[1] - start[1])) - (delta_y * (anchor[0] - start[0]))
@@ -75,6 +81,23 @@ def _line_crossing_delta(first_side: str, last_side: str) -> int:
     if first_side == _SIDE_RIGHT and last_side == _SIDE_LEFT:
         return -1
     return 0
+
+
+def _direction_matches_motion(
+    direction: str,
+    line_delta: int,
+) -> bool:
+    """Check whether side-transition direction matches configured direction."""
+    if line_delta == 0:
+        return False
+
+    if direction == "any":
+        return True
+    if direction in {"left_to_right", "top_to_bottom"}:
+        return line_delta > 0
+    if direction in {"right_to_left", "bottom_to_top"}:
+        return line_delta < 0
+    return False
 
 
 def _advance_progress(memory: dict, progress_key: str, ordered_lines: list[int], line_index: int) -> bool:
@@ -148,17 +171,22 @@ def process_frame(
 
         mem = track_memory[tid]
         line_state_history = mem.setdefault("line_state_history", {})
+        line_anchor_history = mem.setdefault("line_anchor_history", {})
         line_events: list[dict] = []
 
         for line_index, polyline in enumerate(polylines, start=1):
             side = _side_of_polyline(anchor, polyline, frame_w, frame_h)
             side_history = line_state_history.setdefault(line_index, [])
+            anchor_history = line_anchor_history.setdefault(line_index, [])
             if side == _SIDE_ON:
                 continue
 
             side_history.append(side)
+            anchor_history.append(anchor)
             if len(side_history) > state_threshold:
                 side_history.pop(0)
+            if len(anchor_history) > state_threshold:
+                anchor_history.pop(0)
             if len(side_history) < state_threshold:
                 continue
 
@@ -168,12 +196,17 @@ def process_frame(
             if line_delta == 0:
                 continue
 
+            direction = normalised_directions[line_index - 1]
+            if not _direction_matches_motion(direction, line_delta):
+                continue
+
             side_history[:] = [last_side]
+            anchor_history[:] = [anchor]
             line_events.append(
                 {
                     "line_index": line_index,
                     "line_delta": line_delta,
-                    "direction": normalised_directions[line_index - 1],
+                    "direction": direction,
                     "first_zone": first_side,
                     "last_zone": last_side,
                 }

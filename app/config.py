@@ -319,8 +319,14 @@ def _normalise_size_sanity(value: Any) -> dict[str, float | bool]:
 
 def _config_path() -> Path:
     """Return the resolved YAML config path."""
-    env_path = os.environ.get("APP_CONFIG_PATH", "config.yaml")
-    return Path(env_path).resolve()
+    env_path = os.environ.get("APP_CONFIG_PATH")
+    if env_path:
+        return Path(env_path).resolve()
+
+    cwd = Path.cwd()
+    preferred = cwd / "config.yml"
+    fallback = cwd / "config.yaml"
+    return preferred.resolve() if preferred.exists() else fallback.resolve()
 
 
 @lru_cache(maxsize=1)

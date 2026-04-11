@@ -134,9 +134,14 @@ class SimpleTracker:
                 new_track = STrack(det[:4], det[4], self.frame_id)
                 new_track.is_activated = True
                 self.tracked_stracks.append(new_track)
-        active = [t for t in self.tracked_stracks if t.time_since_update < self.max_age and t.hits >= self.min_hits]
+        active = [t for t in self.tracked_stracks if t.time_since_update < self.max_age]
         self.tracked_stracks = active
-        return active
+
+        # Only expose tracks that were refreshed by a detection on this frame.
+        # Otherwise stale boxes can remain visible after confidence filtering
+        # removes the underlying detections, which makes runtime conf changes
+        # look ineffective.
+        return [t for t in active if t.time_since_update == 0 and t.hits >= self.min_hits]
     
     def reset(self) -> None:
         """Reset tracker state."""
@@ -300,16 +305,30 @@ class OpenVINODetector:
             predictions = predictions.T
 
         for pred in predictions:
-            # Class confidence scores (assuming 80 classes for COCO)
-            scores = pred[4:]  # All values after x,y,w,h,conf
-            
-            # Skip if objectness conf below threshold
-            if pred[4] < self.conf_threshold:
+            if len(pred) <= 4:
                 continue
 
-            # Get class with highest score
-            class_id = int(np.argmax(scores))
-            conf = float(scores[class_id] * pred[4])  # objectness * class_conf
+            # Support both common YOLO export layouts:
+            # 1) [x, y, w, h, cls0, cls1, ...] (no explicit objectness)
+            # 2) [x, y, w, h, obj, cls0, cls1, ...] (explicit objectness)
+            scores_no_obj = pred[4:]
+            class_id_no_obj = int(np.argmax(scores_no_obj))
+            conf_no_obj = float(scores_no_obj[class_id_no_obj])
+
+            conf_obj = -1.0
+            class_id_obj = 0
+            if len(pred) > 5:
+                scores_obj = pred[5:]
+                if len(scores_obj) > 0:
+                    class_id_obj = int(np.argmax(scores_obj))
+                    conf_obj = float(pred[4] * scores_obj[class_id_obj])
+
+            if conf_obj > conf_no_obj:
+                conf = conf_obj
+                class_id = class_id_obj
+            else:
+                conf = conf_no_obj
+                class_id = class_id_no_obj
 
             # Filter by class if specified
             if self.classes and class_id not in self.classes:
@@ -359,7 +378,11 @@ class OpenVINODetector:
         if not detections:
             return detections
 
-        boxes = np.array([[d.x1, d.y1, d.x2, d.y2] for d in detections])
+        # cv2.dnn.NMSBoxes expects [x, y, w, h], not [x1, y1, x2, y2].
+        boxes = np.array([
+            [d.x1, d.y1, max(0.0, d.x2 - d.x1), max(0.0, d.y2 - d.y1)]
+            for d in detections
+        ])
         scores = np.array([d.conf for d in detections])
 
         indices = cv2.dnn.NMSBoxes(

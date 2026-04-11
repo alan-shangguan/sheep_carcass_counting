@@ -8,7 +8,11 @@ services:
       # Paths inside the container must match the ENV defaults in Dockerfile.
       - ./videos:/app/videos:ro
       - ./weights:/app/weights:ro
+      - ./config.yml:/app/config.yml:ro
+      - ./outputs:/app/outputs
     environment:
+      APP_CONFIG_PATH: "config.yml"
+      APP_LOG_PATH: "outputs/sheep_counter.log"
       VIDEO_PATH: "videos/Event20260123020157006.mp4"
       MODEL_PATH: "weights/best_openvino_model"
       GATE_Y_RATIO: "0.5"

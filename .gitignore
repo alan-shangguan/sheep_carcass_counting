@@ -29,3 +29,7 @@ ENV/
 *.mts
 *.m2ts
 *.ts
+
+# Logs
+*.log
+outputs/sheep_counter.log

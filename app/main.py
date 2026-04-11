@@ -48,9 +48,22 @@ import uvicorn
 
 from app.config import load_config
 from app.engine import run_engine
+from app.runtime_logging import log_event
 from app.state import SharedState, shared_state
 
 CONFIG = load_config()
+# Force Reverse Decrease to start as true by default
+REVERSE_DECREASE_DEFAULT = True
+GATE_THICKNESS_DEFAULT = 5
+
+_ALLOWED_DIRECTIONS = {
+    "left-to-right",
+    "right-to-left",
+    "top-to-bottom",
+    "bottom-to-top",
+    "any",
+}
+_ALLOWED_ANCHOR_POINTS = {"topcenter", "bottomcenter", "bottomright"}
 
 _VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".m4v"}
 
@@ -118,20 +131,28 @@ async def lifespan(app: FastAPI):
     """Start the CV engine worker in a daemon thread on application startup."""
     startup_errors = _validate_startup()
     with shared_state.lock:
+        shared_state.running = True
         shared_state.startup_validated = True
         shared_state.startup_errors = startup_errors
         shared_state.runtime_conf_threshold = float(CONFIG.model.conf_threshold)
         shared_state.runtime_iou_threshold = float(CONFIG.model.iou_threshold)
         shared_state.runtime_skip_frame = max(1, int(CONFIG.model.skip_frame))
         shared_state.runtime_polylines = [list(polyline) for polyline in CONFIG.counter.polylines]
+        shared_state.runtime_crossing_directions = list(CONFIG.counter.crossing_directions)
+        shared_state.runtime_crossing_order = list(CONFIG.counter.crossing_order)
+        shared_state.runtime_anchor_point = str(CONFIG.counter.anchor_point).lower()
         shared_state.runtime_min_hits = int(CONFIG.counter.min_hits)
         shared_state.runtime_state_threshold = int(CONFIG.counter.state_threshold)
-        shared_state.runtime_reverse_decrease_counting = bool(CONFIG.counter.reverse_decrease_counting)
+        shared_state.runtime_reverse_decrease_counting = REVERSE_DECREASE_DEFAULT
+        shared_state.runtime_gate_thickness = GATE_THICKNESS_DEFAULT
+        shared_state.runtime_jpeg_quality = int(CONFIG.stream.jpeg_quality)
+        shared_state.status_text = "Running"
 
     if startup_errors:
         with shared_state.lock:
             shared_state.status_text = "Startup validation failed"
         shared_state.add_event("startup_validation_failed", {"errors": startup_errors})
+        log_event("startup_validation_failed", errors=startup_errors)
         app.state.engine_thread = None
         yield
         return
@@ -144,6 +165,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.engine_thread = engine_thread
     engine_thread.start()
+    log_event("engine_thread_started", thread_name=engine_thread.name)
     yield
 
     with shared_state.lock:
@@ -228,9 +250,14 @@ def get_state() -> JSONResponse:
                 "iou_threshold": shared_state.runtime_iou_threshold,
                 "skip_frame": shared_state.runtime_skip_frame,
                 "tripwire_polylines": [list(polyline) for polyline in shared_state.runtime_polylines],
+                "crossing_directions": list(shared_state.runtime_crossing_directions),
+                "crossing_order": list(shared_state.runtime_crossing_order),
+                "anchor_point": shared_state.runtime_anchor_point,
                 "min_hits": shared_state.runtime_min_hits,
                 "state_threshold": shared_state.runtime_state_threshold,
                 "reverse_decrease_counting": shared_state.runtime_reverse_decrease_counting,
+                "gate_thickness": shared_state.runtime_gate_thickness,
+                "jpeg_quality": shared_state.runtime_jpeg_quality,
             },
         })
 
@@ -311,7 +338,7 @@ def get_config() -> JSONResponse:
                 "crossing_order": CONFIG.counter.crossing_order,
                 "anchor_point": CONFIG.counter.anchor_point,
                 "state_threshold": CONFIG.counter.state_threshold,
-                "reverse_decrease_counting": CONFIG.counter.reverse_decrease_counting,
+                "reverse_decrease_counting": REVERSE_DECREASE_DEFAULT,
                 "min_hits": CONFIG.counter.min_hits,
             },
         }
@@ -328,9 +355,14 @@ def get_runtime_settings() -> JSONResponse:
                 "iou_threshold": shared_state.runtime_iou_threshold,
                 "skip_frame": shared_state.runtime_skip_frame,
                 "tripwire_polylines": [list(polyline) for polyline in shared_state.runtime_polylines],
+                "crossing_directions": list(shared_state.runtime_crossing_directions),
+                "crossing_order": list(shared_state.runtime_crossing_order),
+                "anchor_point": shared_state.runtime_anchor_point,
                 "min_hits": shared_state.runtime_min_hits,
                 "state_threshold": shared_state.runtime_state_threshold,
                 "reverse_decrease_counting": shared_state.runtime_reverse_decrease_counting,
+                "gate_thickness": shared_state.runtime_gate_thickness,
+                "jpeg_quality": shared_state.runtime_jpeg_quality,
             }
         )
 
@@ -345,9 +377,14 @@ async def update_runtime_settings(request: Request) -> JSONResponse:
         current_iou = float(shared_state.runtime_iou_threshold)
         current_skip = int(shared_state.runtime_skip_frame)
         current_polylines = [list(polyline) for polyline in shared_state.runtime_polylines]
+        current_directions = list(shared_state.runtime_crossing_directions)
+        current_order = list(shared_state.runtime_crossing_order)
+        current_anchor_point = str(shared_state.runtime_anchor_point)
         current_min_hits = int(shared_state.runtime_min_hits)
         current_state_threshold = int(shared_state.runtime_state_threshold)
         current_reverse_decrease = bool(shared_state.runtime_reverse_decrease_counting)
+        current_gate_thickness = int(shared_state.runtime_gate_thickness)
+        current_jpeg_quality = int(shared_state.runtime_jpeg_quality)
 
     try:
         conf = float(payload.get("conf_threshold", current_conf))
@@ -356,8 +393,41 @@ async def update_runtime_settings(request: Request) -> JSONResponse:
         min_hits = int(payload.get("min_hits", current_min_hits))
         state_threshold = int(payload.get("state_threshold", current_state_threshold))
         reverse_decrease_counting = bool(payload.get("reverse_decrease_counting", current_reverse_decrease))
+        gate_thickness = int(payload.get("gate_thickness", current_gate_thickness))
+        jpeg_quality = int(payload.get("jpeg_quality", current_jpeg_quality))
     except Exception:
         return JSONResponse({"ok": False, "error": "invalid runtime settings values"}, status_code=400)
+
+    directions_payload = payload.get("crossing_directions")
+    crossing_order_payload = payload.get("crossing_order")
+    anchor_point_payload = payload.get("anchor_point")
+
+    crossing_directions = current_directions
+    if directions_payload is not None:
+        if not isinstance(directions_payload, list) or not directions_payload:
+            return JSONResponse({"ok": False, "error": "crossing_directions must be a non-empty list"}, status_code=400)
+        parsed_directions: list[str] = []
+        for item in directions_payload:
+            direction = str(item).strip().lower()
+            if direction not in _ALLOWED_DIRECTIONS:
+                return JSONResponse({"ok": False, "error": f"unsupported crossing direction: {direction}"}, status_code=400)
+            parsed_directions.append(direction)
+        crossing_directions = parsed_directions
+
+    crossing_order = current_order
+    if crossing_order_payload is not None:
+        if not isinstance(crossing_order_payload, list) or not crossing_order_payload:
+            return JSONResponse({"ok": False, "error": "crossing_order must be a non-empty list"}, status_code=400)
+        try:
+            crossing_order = [int(item) for item in crossing_order_payload]
+        except Exception:
+            return JSONResponse({"ok": False, "error": "crossing_order must be integers"}, status_code=400)
+
+    anchor_point = current_anchor_point
+    if anchor_point_payload is not None:
+        anchor_point = str(anchor_point_payload).strip().lower()
+        if anchor_point not in _ALLOWED_ANCHOR_POINTS:
+            return JSONResponse({"ok": False, "error": "anchor_point must be topcenter, bottomcenter, or bottomright"}, status_code=400)
 
     polylines_payload = payload.get("tripwire_polylines")
     line1_y_payload = payload.get("line1_y")
@@ -400,23 +470,39 @@ async def update_runtime_settings(request: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": "min_hits must be >= 1"}, status_code=400)
     if state_threshold < 2:
         return JSONResponse({"ok": False, "error": "state_threshold must be >= 2"}, status_code=400)
+    if gate_thickness < 1 or gate_thickness > 20:
+        return JSONResponse({"ok": False, "error": "gate_thickness must be between 1 and 20"}, status_code=400)
+    if jpeg_quality < 20 or jpeg_quality > 100:
+        return JSONResponse({"ok": False, "error": "jpeg_quality must be between 20 and 100"}, status_code=400)
     if len(polylines) != len(CONFIG.counter.crossing_directions):
         return JSONResponse(
             {"ok": False, "error": "tripwire_polylines count must match configured crossing directions"},
             status_code=400,
         )
+    if len(crossing_directions) != len(polylines):
+        return JSONResponse({"ok": False, "error": "crossing_directions count must match tripwire_polylines"}, status_code=400)
+    if len(set(crossing_order)) != len(crossing_order):
+        return JSONResponse({"ok": False, "error": "crossing_order must contain unique line indices"}, status_code=400)
+    if any(line_index < 1 or line_index > len(polylines) for line_index in crossing_order):
+        return JSONResponse({"ok": False, "error": "crossing_order contains an out-of-range line index"}, status_code=400)
 
     with shared_state.lock:
         shared_state.runtime_conf_threshold = conf
         shared_state.runtime_iou_threshold = iou
         shared_state.runtime_skip_frame = skip
         shared_state.runtime_polylines = [list(polyline) for polyline in polylines]
+        shared_state.runtime_crossing_directions = list(crossing_directions)
+        shared_state.runtime_crossing_order = list(crossing_order)
+        shared_state.runtime_anchor_point = anchor_point
         shared_state.runtime_min_hits = min_hits
         shared_state.runtime_state_threshold = state_threshold
         shared_state.runtime_reverse_decrease_counting = reverse_decrease_counting
+        shared_state.runtime_gate_thickness = gate_thickness
+        shared_state.runtime_jpeg_quality = jpeg_quality
         shared_state.status_text = (
             f"Runtime settings updated: conf={conf:.2f} iou={iou:.2f} skip={skip} "
-            f"min_hits={min_hits} state_threshold={state_threshold}"
+            f"min_hits={min_hits} state_threshold={state_threshold} "
+            f"thickness={gate_thickness} jpg={jpeg_quality}"
         )
 
     shared_state.add_event(
@@ -426,9 +512,14 @@ async def update_runtime_settings(request: Request) -> JSONResponse:
             "iou_threshold": iou,
             "skip_frame": skip,
             "tripwire_polylines": [list(polyline) for polyline in polylines],
+            "crossing_directions": list(crossing_directions),
+            "crossing_order": list(crossing_order),
+            "anchor_point": anchor_point,
             "min_hits": min_hits,
             "state_threshold": state_threshold,
             "reverse_decrease_counting": reverse_decrease_counting,
+            "gate_thickness": gate_thickness,
+            "jpeg_quality": jpeg_quality,
         },
     )
 
@@ -439,9 +530,14 @@ async def update_runtime_settings(request: Request) -> JSONResponse:
             "iou_threshold": iou,
             "skip_frame": skip,
             "tripwire_polylines": [list(polyline) for polyline in polylines],
+            "crossing_directions": list(crossing_directions),
+            "crossing_order": list(crossing_order),
+            "anchor_point": anchor_point,
             "min_hits": min_hits,
             "state_threshold": state_threshold,
             "reverse_decrease_counting": reverse_decrease_counting,
+            "gate_thickness": gate_thickness,
+            "jpeg_quality": jpeg_quality,
         }
     )
 
@@ -496,6 +592,7 @@ def pause_video() -> JSONResponse:
         current = shared_state.current_video_path or CONFIG.video.path
         shared_state.status_text = f"Video paused: {current}"
     shared_state.add_event("video_paused", {"video_path": current})
+    log_event("video_pause_requested", video_path=current)
     return JSONResponse({"ok": True, "video_paused": True, "video_path": current})
 
 
@@ -507,6 +604,7 @@ def resume_video() -> JSONResponse:
         current = shared_state.current_video_path or CONFIG.video.path
         shared_state.status_text = f"Video playing: {current}"
     shared_state.add_event("video_resumed", {"video_path": current})
+    log_event("video_resume_requested", video_path=current)
     return JSONResponse({"ok": True, "video_paused": False, "video_path": current})
 
 
