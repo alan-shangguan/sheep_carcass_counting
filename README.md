@@ -119,13 +119,17 @@ python render_current_config.py
 This runs the engine in render mode and writes the configured annotated output
 file, for example outputs/counting_result.mp4.
 
-## REST API
+## Recent Updates
 
-| Method | Path | Description |
-|---|---|---|
-| POST | /start | Enable inference/counting |
-| POST | /stop | Pause counting (stream continues) |
-| POST | /reset | Reset count and per-track memory |
-| GET | /state | Returns running/status/count snapshot |
-| GET | /stream | MJPEG video stream |
-| GET | / | Browser UI |
+- Runtime Settings panel now displays all live settings (except tripwire fields) in a read-only summary for transparency.
+- Tripwire fields (L1 Y, L2 Y) are no longer shown in the Runtime Settings panel or summary.
+- The Reverse Decrease setting now always starts as true by default, regardless of config.
+- To rebuild and restart the Docker service after changes:
+  ```bash
+  docker compose build sheep-counter
+  docker compose restart sheep-counter
+  ```
+- For troubleshooting, check logs with:
+  ```bash
+  docker compose logs --tail 60 sheep-counter
+  ```
