@@ -18,6 +18,14 @@
       --accent-red: #ef4444;
       --accent-yellow: #f59e0b;
       --accent-blue: #3b82f6;
+      --stream-aspect-ratio: 16 / 9;
+    }
+
+    html {
+      height: 100%;
+      min-height: 100%;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
     }
 
     body {
@@ -25,17 +33,20 @@
       background: var(--bg-primary);
       color: var(--text-primary);
       padding: 10px;
+      height: 100vh;
       min-height: 100vh;
-      overflow-y: auto;
+      overflow: hidden;
       line-height: 1.6;
     }
 
     .container {
       max-width: 1600px;
+      width: 100%;
       margin: 0 auto;
-      min-height: calc(100vh - 20px);
+      height: calc(100vh - 20px);
+      min-height: 0;
       display: grid;
-      grid-template-rows: auto auto auto;
+      grid-template-rows: auto minmax(0, 1fr);
       gap: 12px;
     }
 
@@ -50,7 +61,7 @@
       font-weight: 700;
       color: var(--text-primary);
       margin-bottom: 8px;
-      letter-spacing: -0.5px;
+      letter-spacing: 0;
     }
 
     .header-meta {
@@ -83,20 +94,16 @@
       50% { opacity: 0.5; }
     }
 
-    /* Layout: 2-column on desktop, 1-column on mobile */
+    /* Layout: 25% video, 75% controls on desktop */
     .main-grid {
       display: grid;
-      grid-template-columns: 25% 75%;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
       gap: 12px;
       margin-bottom: 0;
       min-height: 0;
-      align-items: start;
-    }
-
-    @media (max-width: 1024px) {
-      .main-grid {
-        grid-template-columns: 1fr;
-      }
+      align-items: stretch;
+      width: 100%;
+      height: 100%;
     }
 
     /* ---- Video Stream ---- */
@@ -107,9 +114,11 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      min-height: 200px;
+      min-height: 0;
+      max-height: 100%;
       width: 100%;
       justify-self: center;
+      min-width: 0;
     }
 
     .stream-header {
@@ -129,7 +138,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 170px;
+      min-height: 0;
+      aspect-ratio: var(--stream-aspect-ratio);
+      max-height: 100%;
       position: relative;
       overflow: hidden;
       width: 100%;
@@ -140,7 +151,8 @@
     #stream-img {
       width: 100%;
       max-width: none;
-      height: auto;
+      height: 100%;
+      max-height: 100%;
       object-fit: contain;
       display: block;
     }
@@ -156,18 +168,24 @@
     /* ---- Sidebar (Stats & Controls) ---- */
     .sidebar {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
       min-height: 0;
       overflow: visible;
-      align-items: start;
+      align-items: stretch;
+      min-width: 0;
+      max-height: 100%;
     }
 
     .sidebar-col {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
       min-height: 0;
+      min-width: 0;
+      max-height: 100%;
+      overflow: auto;
     }
 
     /* Bigger typography for right sidebar readability */
@@ -178,14 +196,13 @@
     .sidebar .config-title,
     .sidebar .state-box-label,
     .sidebar .count-label {
-      font-size: 0.95rem;
+      font-size: 0.78rem;
     }
-
     .sidebar button {
-      font-size: 0.98rem;
-      padding: 13px 16px;
+      font-size: 0.82rem;
+      padding: 8px 10px;
+      overflow-wrap: anywhere;
     }
-
     .sidebar .overlay-body,
     .sidebar .events-body,
     .sidebar .config-grid,
@@ -193,11 +210,12 @@
     .sidebar #val-status,
     .sidebar .status-message,
     .sidebar select {
-      font-size: 0.95rem;
+      font-size: 0.82rem;
+      overflow-wrap: anywhere;
     }
 
     .sidebar .metric-value {
-      font-size: 1.45rem;
+      font-size: 1.2rem;
     }
 
     /* ---- Big Count Display ---- */
@@ -205,16 +223,20 @@
       background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 14px;
+      padding: 12px;
       text-align: center;
     }
 
     .count-hero {
-      grid-column: 1 / -1;
       background: radial-gradient(circle at top, rgba(245, 158, 11, 0.24), rgba(20, 24, 41, 0.95));
       border: 2px solid rgba(245, 158, 11, 0.75);
       box-shadow: 0 0 20px rgba(245, 158, 11, 0.28);
-      padding: 18px;
+      padding: 12px;
+      display: flex;
+      min-height: 96px;
+      flex-direction: column;
+      justify-content: center;
+      grid-column: 1 / -1;
     }
 
     .count-label {
@@ -234,14 +256,14 @@
     }
 
     .count-hero .count-label {
-      font-size: 1.05rem;
-      letter-spacing: 1.4px;
+      font-size: 0.82rem;
+      letter-spacing: 0.8px;
       margin-bottom: 8px;
       color: #ffd48a;
     }
 
     .count-hero .count-value {
-      font-size: 4.4rem;
+      font-size: 2.8rem;
       line-height: 1;
       text-shadow: 0 0 16px rgba(245, 158, 11, 0.45);
       animation: countPulse 2s ease-in-out infinite;
@@ -257,7 +279,7 @@
       background: var(--bg-secondary);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 16px;
+      padding: 12px;
     }
 
     .state-box-label {
@@ -265,7 +287,7 @@
       text-transform: uppercase;
       letter-spacing: 1px;
       color: var(--text-secondary);
-      margin-bottom: 12px;
+      margin-bottom: 8px;
       font-weight: 600;
     }
 
@@ -291,6 +313,14 @@
       border: 1px solid var(--accent-red);
     }
 
+    .state-detail {
+      margin-top: 8px;
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
     /* ---- Control Buttons ---- */
     .controls-panel {
       background: var(--bg-secondary);
@@ -312,10 +342,10 @@
     }
 
     button {
-      padding: 12px 16px;
+      padding: 8px 10px;
       border: none;
       border-radius: 6px;
-      font-size: 0.875rem;
+      font-size: 0.82rem;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s ease;
@@ -323,6 +353,24 @@
       letter-spacing: 0.5px;
       font-family: inherit;
       border: 1px solid transparent;
+      width: 100%;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font-family: inherit;
+    }
+
+    input,
+    select {
+      line-height: 1.2;
+      min-width: 0;
+    }
+
+    select {
+      width: 100%;
     }
 
     button:hover:not(:disabled) { transform: translateY(-2px); }
@@ -353,8 +401,8 @@
     /* ---- Metrics Grid ---- */
     .metrics-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
       margin-top: 8px;
     }
 
@@ -362,7 +410,7 @@
       background: var(--bg-secondary);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 10px;
+      padding: 9px;
     }
 
     .metric-label {
@@ -370,7 +418,7 @@
       text-transform: uppercase;
       letter-spacing: 1px;
       color: var(--text-secondary);
-      margin-bottom: 8px;
+      margin-bottom: 4px;
       font-weight: 600;
     }
 
@@ -387,8 +435,9 @@
       border-radius: 8px;
       overflow: hidden;
       min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
-
     .overlay-header {
       padding: 10px 12px;
       background: var(--bg-tertiary);
@@ -400,9 +449,34 @@
       letter-spacing: 0.5px;
     }
 
+    .runtime-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .btn-apply-runtime-top {
+      width: auto;
+      min-width: 96px;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+    }
+
+    .runtime-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .overlay-panel.runtime-settings-panel {
+      height: 100%;
+      max-height: none;
+    }
+
     .runtime-controls {
       display: grid;
-      grid-template-columns: repeat(4, minmax(90px, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
       padding: 10px;
       border-bottom: 1px solid var(--border-color);
@@ -410,33 +484,53 @@
     }
 
     .runtime-controls label {
-      font-size: 0.85rem;
+      font-size: 0.75rem;
       color: var(--text-secondary);
       display: block;
-      margin-bottom: 4px;
+      margin-bottom: 3px;
     }
 
     .runtime-controls input {
       width: 100%;
-      padding: 8px;
+      padding: 7px;
       border-radius: 6px;
       border: 1px solid var(--border-color);
       background: var(--bg-tertiary);
       color: var(--text-primary);
-      font-size: 0.9rem;
+      font-size: 0.82rem;
     }
 
-    .runtime-actions {
+    .runtime-controls select {
+      padding: 7px;
+      font-size: 0.82rem;
+    }
+
+    .runtime-controls > div.runtime-wide {
       grid-column: 1 / -1;
-      display: flex;
-      gap: 8px;
-      align-items: center;
     }
 
-    .runtime-note {
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-      opacity: 0.9;
+    .btn-apply-runtime {
+      background: var(--accent-green);
+      color: #fff;
+      border-color: rgba(16, 185, 129, 0.75);
+    }
+
+    .btn-apply-runtime:hover:not(:disabled) {
+      background: #059669;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+
+    .runtime-controls textarea {
+      width: 100%;
+      min-height: 84px;
+      resize: vertical;
+      padding: 7px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-size: 0.82rem;
+      line-height: 1.35;
     }
 
     /* ---- Events Log ---- */
@@ -448,10 +542,11 @@
       display: flex;
       flex-direction: column;
       min-height: 0;
+      flex: 1;
     }
 
     .events-header {
-      padding: 12px 16px;
+      padding: 10px 12px;
       background: var(--bg-tertiary);
       border-bottom: 1px solid var(--border-color);
       font-size: 0.875rem;
@@ -543,15 +638,21 @@
       max-height: 360px;
     }
 
-    @media (max-width: 1280px) {
+    @media (max-width: 1500px) {
+      .sidebar {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+    }
+
+    @media (max-width: 1180px) {
       .container {
-        grid-template-rows: auto auto auto;
-        overflow: auto;
+        grid-template-rows: auto minmax(0, 1fr);
+        overflow: hidden;
       }
 
       body {
-        height: auto;
-        overflow: auto;
+        height: 100vh;
+        overflow: hidden;
       }
 
       .bottom-grid {
@@ -562,15 +663,27 @@
         grid-template-columns: 1fr;
       }
 
-      .sidebar {
+      .main-grid {
         grid-template-columns: 1fr;
+        overflow: auto;
+      }
+
+      .sidebar {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+        max-height: none;
       }
     }
 
-    @media (max-width: 1500px) and (min-width: 1281px) {
+    @media (max-width: 760px) {
       .sidebar {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr;
       }
+
+      .metrics-grid,
+      .runtime-controls {
+        grid-template-columns: 1fr;
+      }
+
     }
 
     .config-title {
@@ -629,7 +742,7 @@
       border-radius: 4px;
       font-size: 0.75rem;
       color: var(--text-secondary);
-      margin-top: 12px;
+      margin-top: 4px;
       text-align: center;
     }
   </style>
@@ -677,6 +790,7 @@
           <div class="state-box">
             <div class="state-box-label">Engine State</div>
             <div class="state-badge running" id="val-state">Stopped</div>
+            <div class="state-detail" id="val-status">--</div>
           </div>
 
           <!-- Controls -->
@@ -685,80 +799,84 @@
             <div class="controls-label" style="margin-top: 6px;">Video Source</div>
             <select id="video-select" onchange="switchVideoFromList(true)" style="padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);"></select>
             <input id="video-file-input" type="file" accept=".mp4,.mkv,.avi,.mov,.m4v" style="display:none" onchange="handleLocalVideoChosen(event)" />
-            <button class="btn-reset" onclick="switchVideoFromList()">Play Selected Video</button>
-            <button class="btn-reset" onclick="selectVideoFile()">Upload Video From PC</button>
+            <button class="btn-reset" onclick="selectVideoFile()">Select Video From PC</button>
             <button class="btn-reset" onclick="restartCurrentVideo()">Restart Video From Beginning</button>
-            <button class="btn-stop" id="btn-video-pause" onclick="toggleVideoPause()">Pause Video</button>
-            <button class="btn-start" id="btn-run-toggle" data-running="false" onclick="toggleRunStop()">Start Counting</button>
+            <button class="btn-start" id="btn-run-toggle" data-running="false" onclick="toggleRunStop()">Start</button>
             <button class="btn-reset" onclick="sendCmd('reset')">Reset Count</button>
             <div class="status-message" id="cmd-status"></div>
           </div>
         </div>
 
         <div class="sidebar-col">
-          <div class="overlay-panel">
-            <div class="overlay-header">Runtime Settings</div>
-            <div class="runtime-controls">
-              <div>
-                <label for="rt-conf">Conf</label>
-                <input id="rt-conf" type="number" min="0" max="1" step="0.01" />
-              </div>
-              <div>
-                <label for="rt-iou">IoU</label>
-                <input id="rt-iou" type="number" min="0" max="1" step="0.01" />
-              </div>
-              <div>
-                <label for="rt-skip">Skip Frame</label>
-                <input id="rt-skip" type="number" min="1" step="1" />
-              </div>
-              <div>
-                <label for="rt-min-hits">Min Hits</label>
-                <input id="rt-min-hits" type="number" min="1" step="1" />
-              </div>
-              <div>
-                <label for="rt-state-threshold">State Threshold</label>
-                <input id="rt-state-threshold" type="number" min="2" step="1" />
-              </div>
-              <!-- Tripwire fields removed as requested -->
-              <div>
-                <label for="rt-anchor">Anchor Point</label>
-                <select id="rt-anchor" style="width:100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.9rem;">
-                  <option value="topcenter">TopCenter</option>
-                  <option value="bottomcenter">BottomCenter</option>
-                  <option value="bottomright">BottomRight</option>
-                </select>
-              </div>
-              <div>
-                <label for="rt-directions">Directions (csv)</label>
-                <input id="rt-directions" type="text" placeholder="left-to-right,left-to-right" />
-              </div>
-              <div>
-                <label for="rt-order">Crossing Order (csv)</label>
-                <input id="rt-order" type="text" placeholder="1,2" />
-              </div>
-              <div>
-                <label for="rt-thickness">Tripwire Thickness</label>
-                <input id="rt-thickness" type="number" min="1" max="20" step="1" />
-              </div>
-              <div>
-                <label for="rt-jpeg">JPEG Quality</label>
-                <input id="rt-jpeg" type="number" min="20" max="100" step="1" />
-              </div>
-              <div>
-                <label for="rt-reverse">Reverse Decrease</label>
-                <input id="rt-reverse" type="checkbox" style="width:auto; transform: scale(1.25); margin-top:10px;" />
-              </div>
-              <div class="runtime-actions">
-                <button class="btn-reset" onclick="applyRuntimeSettings()">Apply Runtime Settings</button>
-                <span class="runtime-note">Effective immediately</span>
-              </div>
+          <div class="overlay-panel runtime-settings-panel">
+            <div class="overlay-header runtime-header">
+              <span>Runtime Settings</span>
+              <button class="btn-apply-runtime btn-apply-runtime-top" onclick="applyRuntimeSettings()">Apply</button>
             </div>
-            <div style="padding: 10px 12px 0 12px;">
-              <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:4px;">Live Runtime Settings (read-only):</div>
-              <pre id="runtime-settings-summary" style="background:var(--bg-tertiary); color:var(--text-primary); font-size:0.85rem; border-radius:6px; padding:8px; max-height:180px; overflow:auto; margin-bottom:0;"></pre>
+            <div class="runtime-body">
+              <div class="runtime-controls">
+                <div>
+                  <label for="rt-conf">Conf</label>
+                  <input id="rt-conf" type="number" min="0" max="1" step="0.01" />
+                </div>
+                <div>
+                  <label for="rt-iou">IoU</label>
+                  <input id="rt-iou" type="number" min="0" max="1" step="0.01" />
+                </div>
+                <div>
+                  <label for="rt-skip">Skip Frame</label>
+                  <input id="rt-skip" type="number" min="1" step="1" />
+                </div>
+                <div>
+                  <label for="rt-min-hits">Min Hits</label>
+                  <input id="rt-min-hits" type="number" min="1" step="1" />
+                </div>
+                <div>
+                  <label for="rt-state-threshold">State Threshold</label>
+                  <input id="rt-state-threshold" type="number" min="2" step="1" />
+                </div>
+                <div>
+                  <label for="rt-anchor">Anchor Point</label>
+                  <select id="rt-anchor" style="width:100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); font-size: 0.9rem;">
+                    <option value="topcenter">TopCenter</option>
+                    <option value="bottomcenter">BottomCenter</option>
+                    <option value="bottomright">BottomRight</option>
+                  </select>
+                </div>
+                <div class="runtime-wide">
+                  <label for="rt-polylines">Tripwire Polylines</label>
+                  <textarea id="rt-polylines" spellcheck="false" placeholder='[[[0,0.45],[1,0.45]],[[0,0.60],[1,0.60]]]'></textarea>
+                </div>
+                <div>
+                  <label for="rt-directions">Directions (csv)</label>
+                  <input id="rt-directions" type="text" placeholder="left-to-right,left-to-right" />
+                </div>
+                <div>
+                  <label for="rt-order">Crossing Order (csv)</label>
+                  <input id="rt-order" type="text" placeholder="1,2" />
+                </div>
+                <div>
+                  <label for="rt-thickness">Tripwire Thickness</label>
+                  <input id="rt-thickness" type="number" min="1" max="20" step="1" />
+                </div>
+                <div>
+                  <label for="rt-jpeg">JPEG Quality</label>
+                  <input id="rt-jpeg" type="number" min="20" max="100" step="1" />
+                </div>
+                <div>
+                  <label for="rt-reverse">Reverse Decrease</label>
+                  <input id="rt-reverse" type="checkbox" style="width:auto; transform: scale(1.25); margin-top:10px;" />
+                </div>
+              </div>
+              <div style="padding: 10px 12px 0 12px;">
+                <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:4px;">Live Runtime Settings (read-only):</div>
+                <pre id="runtime-settings-summary" style="background:var(--bg-tertiary); color:var(--text-primary); font-size:0.85rem; border-radius:6px; padding:8px; max-height:180px; overflow:auto; margin-bottom:0;"></pre>
+              </div>
             </div>
           </div>
+        </div>
 
+        <div class="sidebar-col">
           <div class="events-panel">
             <div class="events-header">Recent Events</div>
             <div class="events-body" id="events-list">
@@ -790,10 +908,6 @@
               <div class="metric-label">Uptime (s)</div>
               <div class="metric-value" id="val-uptime">0</div>
             </div>
-            <div class="metric-card">
-              <div class="metric-label">Status</div>
-              <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 8px;" id="val-status">--</div>
-            </div>
           </div>
 
         </div>
@@ -803,6 +917,14 @@
 
   <script>
     let pollInterval = null;
+
+    function updateStreamAspectRatio(width, height) {
+      const w = Number(width);
+      const h = Number(height);
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        document.documentElement.style.setProperty('--stream-aspect-ratio', `${w} / ${h}`);
+      }
+    }
 
     async function loadRuntimeSettings() {
       try {
@@ -818,15 +940,13 @@
         document.getElementById('rt-directions').value = (runtime.crossing_directions || []).join(',');
         document.getElementById('rt-order').value = (runtime.crossing_order || []).join(',');
         document.getElementById('rt-thickness').value = String(runtime.gate_thickness ?? 5);
+        document.getElementById('rt-polylines').value = JSON.stringify(runtime.tripwire_polylines || [], null, 0);
         document.getElementById('rt-jpeg').value = String(runtime.jpeg_quality ?? 80);
         document.getElementById('rt-reverse').checked = Boolean(runtime.reverse_decrease_counting);
-        // Tripwire fields removed from UI and logic
         // Show all settings in the summary
         const summaryEl = document.getElementById('runtime-settings-summary');
         if (summaryEl) {
-          // Exclude tripwire_polylines from the summary
-          const { tripwire_polylines, ...rest } = runtime;
-          summaryEl.textContent = JSON.stringify(rest, null, 2);
+          summaryEl.textContent = JSON.stringify(runtime, null, 2);
         }
       } catch (err) {
         console.error('loadRuntimeSettings failed:', err);
@@ -840,8 +960,6 @@
       const skip = parseInt(document.getElementById('rt-skip').value, 10);
       const minHits = parseInt(document.getElementById('rt-min-hits').value, 10);
       const stateThreshold = parseInt(document.getElementById('rt-state-threshold').value, 10);
-      const line1Y = parseFloat(document.getElementById('rt-line1-y').value);
-      const line2Y = parseFloat(document.getElementById('rt-line2-y').value);
       const anchorPoint = document.getElementById('rt-anchor').value;
       const directions = document.getElementById('rt-directions').value
         .split(',')
@@ -852,6 +970,13 @@
         .map(item => parseInt(item.trim(), 10))
         .filter(item => Number.isFinite(item));
       const gateThickness = parseInt(document.getElementById('rt-thickness').value, 10);
+      let tripwirePolylines = [];
+      try {
+        tripwirePolylines = JSON.parse(document.getElementById('rt-polylines').value || '[]');
+      } catch (err) {
+        statusEl.textContent = 'Tripwire polylines must be valid JSON';
+        return;
+      }
       const jpegQuality = parseInt(document.getElementById('rt-jpeg').value, 10);
       const reverseDecrease = document.getElementById('rt-reverse').checked;
 
@@ -871,9 +996,8 @@
             crossing_directions: directions,
             crossing_order: crossingOrder,
             gate_thickness: gateThickness,
+            tripwire_polylines: tripwirePolylines,
             jpeg_quality: jpegQuality,
-            line1_y: line1Y,
-            line2_y: line2Y,
           }),
         });
         const payload = await res.json();
@@ -911,14 +1035,14 @@
       const isRunning = btn.getAttribute('data-running') === 'true';
       const cmd = isRunning ? 'stop' : 'start';
 
-      statusEl.textContent = isRunning ? 'Stopping counting...' : 'Starting counting...';
+      statusEl.textContent = isRunning ? 'Stopping...' : 'Starting...';
       try {
         const res = await fetch('/' + cmd, { method: 'POST' });
         if (!res.ok) {
           statusEl.textContent = `Error (${res.status})`;
           return;
         }
-        statusEl.textContent = isRunning ? 'Counting stopped' : 'Counting running';
+        statusEl.textContent = isRunning ? 'Stopped' : 'Running';
         setTimeout(() => { statusEl.textContent = ''; }, 2000);
       } catch (err) {
         statusEl.textContent = 'Network error';
@@ -988,7 +1112,7 @@
         if (select && payload.requested_video_path) {
           select.value = payload.requested_video_path;
         }
-        statusEl.textContent = `Uploaded and queued: ${payload.requested_video_path}`;
+        statusEl.textContent = `Uploaded and stopped at first frame: ${payload.requested_video_path}`;
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
       } catch (err) {
         statusEl.textContent = 'Video upload failed';
@@ -1019,7 +1143,7 @@
           statusEl.textContent = payload.error || 'Video switch failed';
           return;
         }
-        statusEl.textContent = `Now playing: ${payload.requested_video_path}`;
+        statusEl.textContent = `Selected and stopped at first frame: ${payload.requested_video_path}`;
         setTimeout(() => { statusEl.textContent = ''; }, 2500);
       } catch (err) {
         statusEl.textContent = 'Video switch failed';
@@ -1045,32 +1169,6 @@
       }
     }
 
-    async function toggleVideoPause() {
-      const statusEl = document.getElementById('cmd-status');
-      const btn = document.getElementById('btn-video-pause');
-      const isPaused = btn.getAttribute('data-paused') === 'true';
-      const endpoint = isPaused ? '/videos/resume' : '/videos/pause';
-      const actionText = isPaused ? 'Resuming video...' : 'Pausing video...';
-      statusEl.textContent = actionText;
-
-      try {
-        const res = await fetch(endpoint, { method: 'POST' });
-        const payload = await res.json();
-        if (!res.ok || !payload.ok) {
-          statusEl.textContent = payload.error || 'Video pause toggle failed';
-          return;
-        }
-        const pausedNow = Boolean(payload.video_paused);
-        btn.textContent = pausedNow ? 'Resume Video' : 'Pause Video';
-        btn.setAttribute('data-paused', pausedNow ? 'true' : 'false');
-        statusEl.textContent = pausedNow ? 'Video paused' : 'Video resumed';
-        setTimeout(() => { statusEl.textContent = ''; }, 2000);
-      } catch (err) {
-        statusEl.textContent = 'Video pause toggle failed';
-        console.error('toggleVideoPause failed:', err);
-      }
-    }
-
     /**
      * Poll both /state and /health endpoints
      */
@@ -1089,10 +1187,12 @@
         const health = await healthRes.json();
         const ready = await readyRes.json();
 
+        updateStreamAspectRatio(state.frame_width, state.frame_height);
+
         // Update count and state
         document.getElementById('val-count').textContent = state.count;
         const stateEl = document.getElementById('val-state');
-        if (state.running) {
+        if (state.running && !state.video_paused) {
           stateEl.textContent = 'Running';
           stateEl.className = 'state-badge running';
         } else {
@@ -1101,14 +1201,12 @@
         }
 
         const runToggleBtn = document.getElementById('btn-run-toggle');
-        runToggleBtn.textContent = state.running ? 'Stop Counting' : 'Start Counting';
-        runToggleBtn.setAttribute('data-running', state.running ? 'true' : 'false');
-        runToggleBtn.className = state.running ? 'btn-stop' : 'btn-start';
+        const isActive = Boolean(state.running && !state.video_paused);
+        runToggleBtn.textContent = isActive ? 'Stop' : 'Start';
+        runToggleBtn.setAttribute('data-running', isActive ? 'true' : 'false');
+        runToggleBtn.className = isActive ? 'btn-stop' : 'btn-start';
 
-        const videoPauseBtn = document.getElementById('btn-video-pause');
         const paused = Boolean(state.video_paused);
-        videoPauseBtn.textContent = paused ? 'Resume Video' : 'Pause Video';
-        videoPauseBtn.setAttribute('data-paused', paused ? 'true' : 'false');
 
         // Update health metrics
         document.getElementById('val-fps').textContent = health.loop_fps.toFixed(1);
@@ -1192,6 +1290,7 @@
 
     streamImg.onload = function () {
       streamPlaceholder.style.display = 'none';
+      updateStreamAspectRatio(streamImg.naturalWidth, streamImg.naturalHeight);
     };
 
     streamImg.onerror = function () {

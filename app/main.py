@@ -5,8 +5,8 @@ FastAPI application entry point.
 
 Endpoints
 ~~~~~~~~~
-POST /start   – set running = True
-POST /stop    – set running = False
+POST /start   – resume video playback and enable counting
+POST /stop    – pause video playback and disable counting
 POST /reset   – request a momentary counter/tracker reset
 GET  /state   – return JSON snapshot of current state
 GET  /stream  – MJPEG live video stream (multipart/x-mixed-replace)
@@ -131,7 +131,8 @@ async def lifespan(app: FastAPI):
     """Start the CV engine worker in a daemon thread on application startup."""
     startup_errors = _validate_startup()
     with shared_state.lock:
-        shared_state.running = True
+        shared_state.running = False
+        shared_state.video_paused = True
         shared_state.startup_validated = True
         shared_state.startup_errors = startup_errors
         shared_state.runtime_conf_threshold = float(CONFIG.model.conf_threshold)
@@ -146,7 +147,7 @@ async def lifespan(app: FastAPI):
         shared_state.runtime_reverse_decrease_counting = REVERSE_DECREASE_DEFAULT
         shared_state.runtime_gate_thickness = GATE_THICKNESS_DEFAULT
         shared_state.runtime_jpeg_quality = int(CONFIG.stream.jpeg_quality)
-        shared_state.status_text = "Running"
+        shared_state.status_text = f"Stopped: {CONFIG.video.path}"
 
     if startup_errors:
         with shared_state.lock:
@@ -195,22 +196,32 @@ app = FastAPI(
 
 @app.post("/start", summary="Start counting")
 def start() -> JSONResponse:
-    """Enable inference and counting in the engine thread."""
+    """Resume frame progression and enable inference/counting."""
     with shared_state.lock:
         shared_state.running = True
+        shared_state.video_paused = False
         shared_state.status_text = "Running"
     shared_state.add_event("start", {})
-    return JSONResponse({"ok": True, "running": True})
+    shared_state.add_event(
+        "video_resumed",
+        {"video_path": shared_state.current_video_path or CONFIG.video.path},
+    )
+    return JSONResponse({"ok": True, "running": True, "video_paused": False})
 
 
 @app.post("/stop", summary="Stop counting")
 def stop() -> JSONResponse:
-    """Pause inference and counting; the video stream continues."""
+    """Pause frame progression and disable inference/counting."""
     with shared_state.lock:
         shared_state.running = False
+        shared_state.video_paused = True
         shared_state.status_text = "Stopped"
     shared_state.add_event("stop", {})
-    return JSONResponse({"ok": True, "running": False})
+    shared_state.add_event(
+        "video_paused",
+        {"video_path": shared_state.current_video_path or CONFIG.video.path},
+    )
+    return JSONResponse({"ok": True, "running": False, "video_paused": True})
 
 
 @app.post("/reset", summary="Reset session count")
@@ -244,6 +255,9 @@ def get_state() -> JSONResponse:
             "current_video_path": shared_state.current_video_path,
             "video_paused": shared_state.video_paused,
             "requested_video_path": shared_state.requested_video_path,
+            "frame_width": shared_state.latest_frame_width,
+            "frame_height": shared_state.latest_frame_height,
+            "frame_index": shared_state.latest_frame_index,
             "frame_overlay_lines": list(shared_state.frame_overlay_lines),
             "runtime": {
                 "conf_threshold": shared_state.runtime_conf_threshold,
@@ -330,9 +344,6 @@ def get_config() -> JSONResponse:
                 "skip_frame": CONFIG.model.skip_frame,
             },
             "counter": {
-                "name": CONFIG.counter.name,
-                "event_type": CONFIG.counter.event_type,
-                "input_name": CONFIG.counter.input_name,
                 "polylines": CONFIG.counter.polylines,
                 "crossing_directions": CONFIG.counter.crossing_directions,
                 "crossing_order": CONFIG.counter.crossing_order,
@@ -499,6 +510,11 @@ async def update_runtime_settings(request: Request) -> JSONResponse:
         shared_state.runtime_reverse_decrease_counting = reverse_decrease_counting
         shared_state.runtime_gate_thickness = gate_thickness
         shared_state.runtime_jpeg_quality = jpeg_quality
+        shared_state.track_memory.clear()
+        shared_state.latest_jpeg = None
+        shared_state.latest_frame_width = 0
+        shared_state.latest_frame_height = 0
+        shared_state.latest_frame_index = 0
         shared_state.status_text = (
             f"Runtime settings updated: conf={conf:.2f} iou={iou:.2f} skip={skip} "
             f"min_hits={min_hits} state_threshold={state_threshold} "
@@ -567,10 +583,15 @@ async def select_video(request: Request) -> JSONResponse:
 
     requested = f"videos/{candidate.name}"
     with shared_state.lock:
+        shared_state.running = False
+        shared_state.video_paused = True
+        shared_state.count = 0
+        shared_state.track_memory.clear()
         shared_state.requested_video_path = requested
-        shared_state.status_text = f"Switching video to {requested}"
+        shared_state.restart_video_requested = True
+        shared_state.status_text = f"Selected video stopped at first frame: {requested}"
     shared_state.add_event("video_switch_requested", {"video_path": requested})
-    return JSONResponse({"ok": True, "requested_video_path": requested})
+    return JSONResponse({"ok": True, "requested_video_path": requested, "running": False, "video_paused": True})
 
 
 @app.post("/videos/restart", summary="Restart current video from beginning")
@@ -633,17 +654,27 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
     try:
         with target_path.open("wb") as out_file:
             shutil.copyfileobj(file.file, out_file)
+    except OSError as exc:
+        log_event("video_upload_failed", filename=filename, error=str(exc))
+        return JSONResponse(
+            {"ok": False, "error": f"video upload failed: {exc}"},
+            status_code=500,
+        )
     finally:
         await file.close()
-
     requested = f"videos/{target_name}"
     with shared_state.lock:
+        shared_state.running = False
+        shared_state.video_paused = True
+        shared_state.count = 0
+        shared_state.track_memory.clear()
         shared_state.requested_video_path = requested
-        shared_state.status_text = f"Switching video to {requested}"
+        shared_state.restart_video_requested = True
+        shared_state.status_text = f"Uploaded video stopped at first frame: {requested}"
     shared_state.add_event("video_uploaded", {"video_path": requested, "original_name": filename})
     shared_state.add_event("video_switch_requested", {"video_path": requested})
 
-    return JSONResponse({"ok": True, "requested_video_path": requested})
+    return JSONResponse({"ok": True, "requested_video_path": requested, "running": False, "video_paused": True})
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +721,7 @@ async def stream():
     return StreamingResponse(
         _mjpeg_generator(shared_state),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -700,7 +732,12 @@ async def stream():
 @app.get("/", response_class=HTMLResponse, summary="Web control UI")
 async def index(request: Request) -> HTMLResponse:
     """Serve the single-page HTML control interface."""
-    return templates.TemplateResponse(request, "index.html", {"request": request})
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"request": request},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _debug_main() -> None:

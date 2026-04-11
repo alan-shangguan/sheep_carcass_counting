@@ -116,19 +116,24 @@ class SimpleTracker:
                 for j, det in enumerate(detections):
                     ious[i, j] = self._iou(track.tlbr, det[:4])
             row_ind, col_ind = linear_sum_assignment(-ious)
-            matched = set()
+            matched_tracks = set()
+            matched_detections = set()
             for i, j in zip(row_ind, col_ind):
                 if ious[i, j] > self.iou_threshold:
                     self.tracked_stracks[i].update(detections[j][:4], detections[j][4], self.frame_id)
-                    matched.add(j)
+                    matched_tracks.add(i)
+                    matched_detections.add(j)
             for i in range(len(self.tracked_stracks)):
-                if i not in row_ind:
+                if i not in matched_tracks:
                     self.tracked_stracks[i].mark_missed()
             for j in range(len(detections)):
-                if j not in matched:
+                if j not in matched_detections:
                     new_track = STrack(detections[j][:4], detections[j][4], self.frame_id)
                     new_track.is_activated = True
                     self.tracked_stracks.append(new_track)
+        elif len(self.tracked_stracks) > 0:
+            for track in self.tracked_stracks:
+                track.mark_missed()
         else:
             for det in detections:
                 new_track = STrack(det[:4], det[4], self.frame_id)

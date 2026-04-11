@@ -7,8 +7,16 @@ monitor and control it through a browser dashboard.
 
 ## Quick Start
 
-On Linux, copy the supplied test videos into this repo's `videos/` directory,
-then run:
+Prerequisites:
+
+- Linux shell or WSL on Windows.
+- Docker Engine with the Docker Compose plugin (`docker compose version` should
+  work).
+- The supplied videos copied into this repo's `videos/` directory.
+- The exported model files under `weights/best_openvino_model/` (included in
+  this submission).
+
+Then run:
 
 ```bash
 chmod +x run_system.sh
@@ -20,6 +28,8 @@ Open the dashboard:
 ```text
 http://127.0.0.1:8000/
 ```
+
+and click Start
 
 ## Data Handling And Training
 
@@ -33,6 +43,10 @@ trained a one-class YOLOv8 nano `object` detector in Google Colab, then exported
 the model to OpenVINO for CPU-only Linux edge inference. Test performance was
 good overall; the main remaining false positives were on white litter, handled
 after the confidence threshold with size sanity checks and tripwire logic.
+
+I chose OpenVINO because my local PC does not have a GPU. Exporting the YOLOv8
+nano model to OpenVINO lets the same detector run efficiently on CPU for local
+testing and on a Linux edge unit without depending on CUDA.
 
 Training/export commands in Google Colab:
 
@@ -69,7 +83,7 @@ counter:
 The runtime logic is:
 
 1. Filter weak detections first using the configured confidence threshold.
-2. Apply optional size sanity checks after the confidence threshold. This
+2. Apply size sanity checks after the confidence threshold. This
    rejects boxes whose width, height, area, or aspect ratio does not look like a
    real carcass. This is useful for the remaining white-litter false positives.
 3. Pass the remaining detections into ByteTrack so one carcass can keep an
@@ -112,7 +126,7 @@ This handles the main failure modes:
 | Requirement | Implementation |
 | --- | --- |
 | Train/use a carcass detector | The repo includes trained/exported model artifacts in `weights/`, with the active OpenVINO model at `weights/best_openvino_model`. Metadata shows a one-class YOLO-style detector for `object`. |
-| Robust counting despite imperfect detections | Detection is combined with IoU tracking, configurable confidence/IoU thresholds, skip-frame inference, anchor-point selection, ordered virtual tripwires, side-history smoothing, and optional size sanity filters. |
+| Robust counting despite imperfect detections | Detection is combined with IoU tracking, configurable confidence/IoU thresholds, skip-frame inference, anchor-point selection, ordered virtual tripwires, side-history smoothing, and size sanity filters. |
 | Start/Stop latching | `POST /start` and `POST /stop` latch `SharedState.running`. Frames continue streaming, but inference/counting only happens in the running state. |
 | Reset momentary | `POST /reset` sets `SharedState.reset_requested`. The engine consumes it on the next loop, zeroes the count, clears tracking memory, resets tracker state, and clears the flag. |
 | Real-time backend responsiveness | FastAPI handlers only update shared state under a short lock. The OpenCV/OpenVINO worker thread owns video capture and inference, and it does not hold the API lock during inference or JPEG encoding. |
@@ -153,7 +167,7 @@ Tripwire counter (app/counter.py)
 
 ## Model Artifacts
 
-The active inference path uses OpenVINO for deployment. The repo includes:
+The active inference path uses OpenVINO for CPU deployment. The repo includes:
 
 - `weights/best.pt`: Ultralytics checkpoint.
 - `weights/last.pt`: Ultralytics checkpoint.
@@ -320,15 +334,15 @@ Important keys:
 
 Current active defaults:
 
-- Input video: `videos/Event20260123020659006.mp4`
+- Input video: `videos/Event20260123020157006.mp4`
 - Model path: `weights/best_openvino_model`
 - Class filter: `0`
-- Confidence threshold: `0.85`
+- Confidence threshold: `0.70`
 - IoU threshold: `0.45`
 - Skip frame: `5`
 - Anchor point: `TopCenter`
 - State threshold: `3`
-- Size sanity filter: disabled
+- Size sanity filter: enabled
 - Output video: enabled
 
 Selected environment variables can override runtime paths/settings for quick

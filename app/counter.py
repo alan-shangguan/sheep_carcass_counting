@@ -100,6 +100,19 @@ def _direction_matches_motion(
     return False
 
 
+def _sequence_delta_for_motion(direction: str, line_delta: int) -> int:
+    """Return +1 for configured forward motion, -1 for opposite motion."""
+    if line_delta == 0:
+        return 0
+    if direction == "any":
+        return 1 if line_delta > 0 else -1
+    if _direction_matches_motion(direction, line_delta):
+        return 1
+    if _direction_matches_motion(direction, -line_delta):
+        return -1
+    return 0
+
+
 def _advance_progress(memory: dict, progress_key: str, ordered_lines: list[int], line_index: int) -> bool:
     progress = int(memory.get(progress_key, 0))
     expected_line = ordered_lines[progress] if progress < len(ordered_lines) else None
@@ -197,7 +210,8 @@ def process_frame(
                 continue
 
             direction = normalised_directions[line_index - 1]
-            if not _direction_matches_motion(direction, line_delta):
+            sequence_delta = _sequence_delta_for_motion(direction, line_delta)
+            if sequence_delta == 0:
                 continue
 
             side_history[:] = [last_side]
@@ -206,6 +220,7 @@ def process_frame(
                 {
                     "line_index": line_index,
                     "line_delta": line_delta,
+                    "sequence_delta": sequence_delta,
                     "direction": direction,
                     "first_zone": first_side,
                     "last_zone": last_side,
@@ -219,15 +234,15 @@ def process_frame(
         reverse_position = {line_index: position for position, line_index in enumerate(reverse_order)}
         line_events.sort(
             key=lambda event: (
-                0 if event["line_delta"] > 0 else 1,
+                0 if event["sequence_delta"] > 0 else 1,
                 forward_position.get(event["line_index"], len(ordered_lines))
-                if event["line_delta"] > 0
+                if event["sequence_delta"] > 0
                 else reverse_position.get(event["line_index"], len(reverse_order)),
             )
         )
 
         for event in line_events:
-            if event["line_delta"] > 0:
+            if event["sequence_delta"] > 0:
                 mem["reverse_progress"] = 0
                 if _advance_progress(mem, "forward_progress", ordered_lines, event["line_index"]):
                     count_increment += 1

@@ -44,9 +44,6 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class CounterConfig:
-    name: str
-    event_type: str
-    input_name: str
     polylines: list[list[tuple[float, float]]]
     crossing_directions: list[str]
     crossing_order: list[int]
@@ -114,9 +111,6 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "iou_threshold": 0.45,
     },
     "counter": {
-        "Name": "TripwireEvent",
-        "Type": "TripwireSetBin",
-        "Input": "ObjectCounter",
         "Polylines": [
             [[0.40, 0.10], [0.40, 0.90]],
             [[0.60, 0.10], [0.60, 0.90]],
@@ -363,9 +357,6 @@ def load_config() -> AppConfig:
             iou_threshold=_normalise_threshold(merged["model"].get("iou_threshold", 0.45), "model.iou_threshold"),
         ),
         counter=CounterConfig(
-            name=str(merged["counter"]["Name"]),
-            event_type=str(merged["counter"]["Type"]),
-            input_name=str(merged["counter"]["Input"]),
             polylines=polylines,
             crossing_directions=crossing_directions,
             crossing_order=_normalise_crossing_order(merged["counter"]["CrossingOrder"], len(polylines)),

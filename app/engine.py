@@ -157,6 +157,42 @@ def _placeholder_frame(message: str) -> np.ndarray:
     return frame
 
 
+def _first_frame_preview_jpeg(
+    video_path: str,
+    runtime_polylines: list[list[tuple[float, float]]],
+    runtime_crossing_order: list[int],
+    runtime_gate_thickness: int,
+    runtime_jpeg_quality: int,
+    overlay_lines: list[str],
+) -> tuple[bytes, int, int] | None:
+    """Return an annotated JPEG preview of frame 0 without advancing playback."""
+    preview_cap = cv2.VideoCapture(video_path)
+    try:
+        if not preview_cap.isOpened():
+            return None
+        preview_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ok, frame = preview_cap.read()
+        if not ok or frame is None:
+            return None
+        _draw_gate(
+            frame,
+            False,
+            runtime_polylines,
+            runtime_crossing_order,
+            runtime_gate_thickness,
+        )
+        _draw_config_overlay(frame, overlay_lines)
+        ok, jpeg_buf = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, runtime_jpeg_quality]
+        )
+        if not ok:
+            return None
+        frame_h, frame_w = frame.shape[:2]
+        return jpeg_buf.tobytes(), frame_w, frame_h
+    finally:
+        preview_cap.release()
+
+
 def _put_text(
     frame: np.ndarray,
     text: str,
@@ -209,26 +245,14 @@ def _draw_gate(
         _put_text(frame, f"G{index}", label_pos, 0.9, line_colour, 2)
 
 
-def _draw_config_overlay(frame: np.ndarray) -> None:
-    """Render the active runtime configuration as a compact overlay."""
-    lines = [
-        f"Anchor: {TRIPWIRE_ANCHOR_POINT}",
-        f"Dir: {'/'.join(TRIPWIRE_CROSSING_DIRECTIONS)}",
-        f"Order: {TRIPWIRE_CROSSING_ORDER}",
-        f"Conf/IoU: {MODEL_CONF_THRESHOLD:.2f}/{MODEL_IOU_THRESHOLD:.2f}",
-        f"Skip: {SKIP_FRAME}",
-        (
-            "SizeSanity: "
-            f"{'on' if CONFIG.counter.size_sanity_enabled else 'off'} "
-            f"A[{CONFIG.counter.min_area_ratio:.3f},{CONFIG.counter.max_area_ratio:.3f}] "
-            f"R[{CONFIG.counter.min_aspect_ratio:.2f},{CONFIG.counter.max_aspect_ratio:.2f}]"
-        ),
-    ]
-
+def _draw_config_overlay(frame: np.ndarray, lines: list[str]) -> None:
+    """Render runtime state lines as a compact overlay."""
+    if not lines:
+        return
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.9
+    font_scale = 0.72
     thickness = 2
-    line_height = 28
+    line_height = 24
     padding = 12
     max_width = max(cv2.getTextSize(line, font, font_scale, thickness)[0][0] for line in lines)
     box_width = max_width + padding * 2
@@ -299,17 +323,23 @@ def _extract_tracks(tracked_objects) -> list[dict]:
     ]
 
 
-def _draw_tracked_objects(frame: np.ndarray, tracked_objects) -> None:
-    """Draw tracked bounding boxes and IDs in-place for preview/output."""
+def _draw_tracked_objects(frame: np.ndarray, tracked_objects, frame_w: int, frame_h: int) -> None:
+    """Draw tracked boxes, marking size-sanity rejects visibly."""
     if not tracked_objects:
         return
 
     for obj in tracked_objects:
         x1, y1, x2, y2 = int(obj.x1), int(obj.y1), int(obj.x2), int(obj.y2)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        bbox = (float(obj.x1), float(obj.y1), float(obj.x2), float(obj.y2))
+        passes_size = _passes_size_sanity(bbox, frame_w, frame_h)
+        colour = (0, 255, 0) if passes_size else (0, 0, 255)
+        thickness = 3 if passes_size else 2
+        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, thickness)
         label = f"ID:{int(obj.track_id)} {float(obj.conf):.2f}"
+        if not passes_size:
+            label = f"{label} SIZE FILTERED"
         label_top = max(24, y1)
-        _put_text(frame, label, (x1 + 2, label_top - 4), 0.7, (0, 255, 0), 2)
+        _put_text(frame, label, (x1 + 2, label_top - 4), 0.7, colour, 2)
 
 
 def _passes_size_sanity(bbox: tuple[float, float, float, float], frame_w: int, frame_h: int) -> bool:
@@ -376,6 +406,8 @@ def run_engine(state: SharedState) -> None:
     last_inference_error = ""
     inference_runs = 0
     last_pause_state = False
+    last_tracking_runtime: tuple[float, float, int] | None = None
+    last_size_filtered_count = 0
 
     # Target frame interval; updated once the video is opened.
     target_frame_time: float = 1.0 / 25.0
@@ -385,6 +417,11 @@ def run_engine(state: SharedState) -> None:
 
         switch_to_video: str | None = None
         restart_video = False
+
+        with state.lock:
+            if state.shutdown_requested:
+                state.status_text = "Shutting down"
+                break
 
         # ------------------------------------------------------------------ #
         # 1. Handle reset (momentary flag)                                    #
@@ -404,8 +441,9 @@ def run_engine(state: SharedState) -> None:
         with state.lock:
             running = state.running
             video_paused = state.video_paused
-            if state.requested_video_path and state.requested_video_path != current_video_path:
-                switch_to_video = state.requested_video_path
+            if state.requested_video_path:
+                if state.requested_video_path != current_video_path:
+                    switch_to_video = state.requested_video_path
                 state.requested_video_path = None
             restart_video = bool(state.restart_video_requested)
             if state.restart_video_requested:
@@ -434,6 +472,20 @@ def run_engine(state: SharedState) -> None:
         if model is not None:
             model.detector.conf_threshold = runtime_conf_threshold
             model.detector.iou_threshold = runtime_iou_threshold
+            tracking_runtime = (runtime_conf_threshold, runtime_iou_threshold, runtime_min_hits)
+            if last_tracking_runtime is not None and tracking_runtime != last_tracking_runtime:
+                _reset_model_tracking(model, "runtime_threshold_changed")
+                with state.lock:
+                    state.track_memory.clear()
+                log_event(
+                    "runtime_tracking_reset",
+                    conf_threshold=runtime_conf_threshold,
+                    iou_threshold=runtime_iou_threshold,
+                    min_hits=runtime_min_hits,
+                    video_path=current_video_path,
+                    frame=frame_index,
+                )
+            last_tracking_runtime = tracking_runtime
 
         if switch_to_video is not None:
             current_video_path = switch_to_video
@@ -453,11 +505,16 @@ def run_engine(state: SharedState) -> None:
                 state.current_video_path = current_video_path
                 state.count = 0
                 state.track_memory.clear()
+                state.latest_jpeg = None
+                state.latest_frame_width = 0
+                state.latest_frame_height = 0
+                state.latest_frame_index = 0
                 state.status_text = f"Switched video: {current_video_path}"
             log_event("video_switched", video_path=current_video_path)
 
-        if restart_video and cap is not None and cap.isOpened():
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        if restart_video:
+            if cap is not None and cap.isOpened():
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             if output_writer is not None and not output_writer_released:
                 output_writer.release()
             output_writer = None
@@ -471,6 +528,11 @@ def run_engine(state: SharedState) -> None:
                 state.current_video_path = current_video_path
                 state.count = 0
                 state.track_memory.clear()
+                state.latest_jpeg = None
+                state.latest_frame_width = 0
+                state.latest_frame_height = 0
+                state.latest_frame_index = 0
+                state.latest_frame_ts = time.time()
                 state.status_text = f"Restarted video: {current_video_path}"
             log_event("video_restarted", video_path=current_video_path)
 
@@ -478,22 +540,50 @@ def run_engine(state: SharedState) -> None:
             overlay_lines = [
                 "State: Paused",
                 f"Video: {current_video_path}",
+                f"Frame: {frame_index}",
                 f"Conf/IoU: {runtime_conf_threshold:.2f}/{runtime_iou_threshold:.2f}",
                 f"SkipFrame: {runtime_skip_frame}",
                 f"Anchor: {runtime_anchor_point}",
                 f"Directions: {'/'.join(runtime_crossing_directions)}",
                 f"Order: {runtime_crossing_order}",
                 f"MinHits/StateThreshold: {runtime_min_hits}/{runtime_state_threshold}",
+                f"SizeFilter: {'on' if CONFIG.counter.size_sanity_enabled else 'off'}, "
+                f"rejected {last_size_filtered_count}",
             ]
             if last_crossing_text:
                 overlay_lines.append(last_crossing_text)
             if last_inference_error:
                 overlay_lines.append(last_inference_error)
             with state.lock:
+                needs_preview = state.latest_jpeg is None
+            preview_jpeg = None
+            if needs_preview:
+                preview_jpeg = _first_frame_preview_jpeg(
+                    current_video_path,
+                    runtime_polylines,
+                    runtime_crossing_order,
+                    runtime_gate_thickness,
+                    runtime_jpeg_quality,
+                    [f"Frame: {frame_index}"],
+                )
+            with state.lock:
                 # Keep the latest computed visual result visible while paused,
                 # without reading new frames or running inference.
-                if state.latest_jpeg is not None:
-                    state.latest_frame_ts = time.time()
+                if state.latest_jpeg is None:
+                    if preview_jpeg is not None:
+                        state.latest_jpeg, state.latest_frame_width, state.latest_frame_height = preview_jpeg
+                    else:
+                        ph = _placeholder_frame("Paused - resume video from dashboard")
+                        _draw_config_overlay(ph, [f"Frame: {frame_index}"])
+                        _, jpeg_buf = cv2.imencode(
+                            ".jpg", ph, [cv2.IMWRITE_JPEG_QUALITY, runtime_jpeg_quality]
+                        )
+                        state.latest_jpeg = jpeg_buf.tobytes()
+                        state.latest_frame_width = ph.shape[1]
+                        state.latest_frame_height = ph.shape[0]
+                state.latest_frame_ts = time.time()
+                state.current_video_path = current_video_path
+                state.latest_frame_index = frame_index
                 state.frame_overlay_lines = overlay_lines
             time.sleep(min(target_frame_time, 0.05))
             continue
@@ -511,6 +601,8 @@ def run_engine(state: SharedState) -> None:
                 )
                 with state.lock:
                     state.latest_jpeg = jpeg_buf.tobytes()
+                    state.latest_frame_width = ph.shape[1]
+                    state.latest_frame_height = ph.shape[0]
                     state.latest_frame_ts = time.time()
                     state.current_video_path = current_video_path
                 log_event("video_waiting", video_path=current_video_path)
@@ -532,6 +624,14 @@ def run_engine(state: SharedState) -> None:
             if CONFIG.video.loop:
                 _reset_model_tracking(model, "video_loop")
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                frame_index = 0
+                inference_runs = 0
+                last_crossing_text = ""
+                with state.lock:
+                    state.count = 0
+                    state.track_memory.clear()
+                    state.status_text = f"Replaying video: {current_video_path}"
+                    state.current_video_path = current_video_path
                 log_event("video_loop", video_path=current_video_path)
             else:
                 if output_writer is not None and not output_writer_released:
@@ -587,12 +687,13 @@ def run_engine(state: SharedState) -> None:
                         inference_runs += 1
                         tracked_objects = model(frame)
                         inference_latency_ms = (time.perf_counter() - infer_start) * 1000.0
-                        if tracked_objects:
-                            _draw_tracked_objects(frame, tracked_objects)
-
                         # Extract track list and run gate counter.
                         raw_tracks = _extract_tracks(tracked_objects)
                         tracks = _filter_tracks_for_counting(raw_tracks, frame_w, frame_h)
+                        size_filtered_count = max(0, len(raw_tracks) - len(tracks))
+                        last_size_filtered_count = size_filtered_count
+                        if tracked_objects:
+                            _draw_tracked_objects(frame, tracked_objects, frame_w, frame_h)
                         count_increment = counter_module.process_frame(
                             tracks,
                             state.track_memory,   # mutated in-place; engine owns it
@@ -614,6 +715,7 @@ def run_engine(state: SharedState) -> None:
                             inference_run=inference_runs,
                             raw_tracks=len(raw_tracks),
                             filtered_tracks=len(tracks),
+                            size_filtered_tracks=size_filtered_count,
                             count_increment=count_increment,
                             conf_threshold=runtime_conf_threshold,
                             iou_threshold=runtime_iou_threshold,
@@ -674,17 +776,21 @@ def run_engine(state: SharedState) -> None:
         overlay_lines = [
             f"State: {'Running' if running else 'Paused'}",
             f"Video: {current_video_path}",
+            f"Frame: {frame_index}",
             f"Conf/IoU: {runtime_conf_threshold:.2f}/{runtime_iou_threshold:.2f}",
             f"SkipFrame: {runtime_skip_frame}",
             f"Anchor: {runtime_anchor_point}",
             f"Directions: {'/'.join(runtime_crossing_directions)}",
             f"Order: {runtime_crossing_order}",
             f"MinHits/StateThreshold: {runtime_min_hits}/{runtime_state_threshold}",
+            f"SizeFilter: {'on' if CONFIG.counter.size_sanity_enabled else 'off'}, "
+            f"rejected {last_size_filtered_count}",
         ]
         if last_crossing_text:
             overlay_lines.append(last_crossing_text)
         if last_inference_error:
             overlay_lines.append(last_inference_error)
+        _draw_config_overlay(frame, [f"Frame: {frame_index}"])
         if gate_flash_frames_remaining > 0:
             gate_flash_frames_remaining -= 1
 
@@ -700,6 +806,9 @@ def run_engine(state: SharedState) -> None:
         if ok:
             with state.lock:
                 state.latest_jpeg = jpeg_buf.tobytes()
+                state.latest_frame_width = frame_w
+                state.latest_frame_height = frame_h
+                state.latest_frame_index = frame_index
                 state.latest_frame_ts = time.time()
                 state.frame_overlay_lines = overlay_lines
 
@@ -715,6 +824,13 @@ def run_engine(state: SharedState) -> None:
         sleep_time = target_frame_time - elapsed
         if sleep_time > 0.0:
             time.sleep(sleep_time)
+
+    if output_writer is not None and not output_writer_released:
+        output_writer.release()
+    if cap is not None and cap.isOpened():
+        cap.release()
+    with state.lock:
+        state.engine_thread_alive = False
 
 
 def _debug_main() -> None:

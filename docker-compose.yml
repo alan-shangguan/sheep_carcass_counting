@@ -6,7 +6,7 @@ services:
     volumes:
       # Mount local videos and weights into the container at runtime.
       # Paths inside the container must match the ENV defaults in Dockerfile.
-      - ./videos:/app/videos:ro
+      - ./videos:/app/videos
       - ./weights:/app/weights:ro
       - ./config.yml:/app/config.yml:ro
       - ./outputs:/app/outputs

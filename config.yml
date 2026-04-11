@@ -3,10 +3,10 @@
 
 video:
   # Local input video file.
-  path: videos/Event20260123020659006.mp4
+  path: videos/Event20260123020157006.mp4
 
   # Restart from frame 0 when the file reaches the end.
-  loop: false
+  loop: true
 
 model:
   # Supports .pt, .onnx, or an OpenVINO exported model directory.
@@ -25,7 +25,7 @@ model:
   verbose: false
 
   # Minimum detector confidence for tracked boxes.
-  conf_threshold: 0.85
+  conf_threshold: 0.70
 
   # IoU threshold used by the tracker/detector.
   iou_threshold: 0.45
@@ -35,10 +35,6 @@ model:
   skip_frame: 5
 
 counter:
-  Name: TripwireEvent
-  Type: TripwireSetBin
-  Input: ObjectCounter
-
   # Two-point tripwire polylines in normalized coordinates.
   # Points go LEFT to RIGHT (0.0 to 1.0) to match "left-to-right" direction label
   Polylines:
@@ -67,15 +63,15 @@ counter:
 
   # Filter counted objects using observed clean-instance size statistics.
   size_sanity:
-    enabled: false
-    min_width_ratio: 0.10
-    max_width_ratio: 0.409
-    min_height_ratio: 0.057
-    max_height_ratio: 0.422
-    min_area_ratio: 0.006
-    max_area_ratio: 0.12
-    min_aspect_ratio: 0.56
-    max_aspect_ratio: 2.23
+    enabled: true
+    min_width_ratio: 0.07
+    max_width_ratio: 0.50
+    min_height_ratio: 0.04
+    max_height_ratio: 0.55
+    min_area_ratio: 0.003
+    max_area_ratio: 0.18
+    min_aspect_ratio: 0.35
+    max_aspect_ratio: 3.00
 
 stream:
   # JPEG quality for the MJPEG stream.

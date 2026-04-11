@@ -61,6 +61,12 @@ class SharedState:
     # None until the engine produces its first frame.
     latest_jpeg: bytes | None = None
 
+    # Dimensions of the latest encoded frame. Used by the UI to keep the
+    # stream panel matched to the selected video's aspect ratio.
+    latest_frame_width: int = 0
+    latest_frame_height: int = 0
+    latest_frame_index: int = 0
+
     # Monotonic timestamp (time.time()) of the latest JPEG.
     # Used by the stream generator to detect a new frame.
     latest_frame_ts: float = 0.0
@@ -182,6 +188,9 @@ class SharedState:
                 "count": self.count,
                 "reset_requested": self.reset_requested,
                 "latest_jpeg_ready": self.latest_jpeg is not None,
+                "latest_frame_width": self.latest_frame_width,
+                "latest_frame_height": self.latest_frame_height,
+                "latest_frame_index": self.latest_frame_index,
                 "latest_frame_ts": self.latest_frame_ts,
                 "track_memory_size": len(self.track_memory),
                 "startup_validated": self.startup_validated,
