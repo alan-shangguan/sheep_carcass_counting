@@ -7,7 +7,8 @@ monitor and control it through a browser dashboard.
 
 ## Quick Start
 
-On Linux, put input videos under `videos/`, then run:
+On Linux, copy the supplied test videos into this repo's `videos/` directory,
+then run:
 
 ```bash
 chmod +x run_system.sh
@@ -22,71 +23,18 @@ http://127.0.0.1:8000/
 
 ## Data Handling And Training
 
-I treat the supplied carcass videos as the source of both model data and
-counting validation data. The important point is to split by video/time segment,
-not by random adjacent frames, because neighboring video frames are nearly
-duplicates and can make validation look better than it really is.
+I split the 8 videos by video, not by adjacent random frames: 5 train videos
+for 500+ images, 1 validation video for 100+ images, and 2 test videos for
+100+ images. I deliberately included one litter/debris-only video in train and
+one in test so the detector sees clutter that should not be counted.
 
-I received 8 videos and split them by video, not by random frames:
+I used SAM3 to label carcasses, converted the labels to YOLO bounding boxes,
+trained a one-class YOLOv8 nano `object` detector in Google Colab, then exported
+the model to OpenVINO for CPU-only Linux edge inference. Test performance was
+good overall; the main remaining false positives were on white litter, handled
+after the confidence threshold with size sanity checks and tripwire logic.
 
-- 5 videos for training
-- 1 video for validation
-- 2 videos for test
-
-Two of the videos are deliberate negative examples:
-
-- 1 training video has litter/debris but no sheep carcass
-- 1 test video has litter/debris but no sheep carcass
-
-I included these negative videos on purpose so the detector and counting logic
-see conveyor clutter that should not be counted as carcasses.
-
-Final dataset size was approximately:
-
-- 500+ training images
-- 100+ validation images
-- 100+ test images
-
-Data handling workflow:
-
-1. Extract representative frames from each video at a fixed interval and around
-   difficult sections such as overlap, sway, partial carcasses, and lighting
-   changes.
-2. Use SAM3 to generate labels for visible carcasses.
-3. Convert the SAM3 label results into YOLO-format bounding box labels.
-4. Label each visible carcass as one class, `object`.
-5. Keep litter/debris-only frames as hard negatives with no carcass boxes.
-6. Train a YOLOv8 nano detector in Google Colab.
-7. Export the selected model to OpenVINO so it can run on my CPU-only machine
-   and on a Linux edge unit without requiring a GPU.
-
-Example dataset layout:
-
-```text
-dataset/
-|-- carcass.yaml
-|-- images/
-|   |-- train/
-|   |-- val/
-|   `-- test/
-`-- labels/
-    |-- train/
-    |-- val/
-    `-- test/
-```
-
-Example `dataset/carcass.yaml`:
-
-```yaml
-path: dataset
-train: images/train
-val: images/val
-test: images/test
-names:
-  0: object
-```
-
-Example training/export commands in Google Colab:
+Training/export commands in Google Colab:
 
 ```bash
 python -m pip install ultralytics
@@ -96,6 +44,64 @@ yolo export model=runs/carcass/sheep_counter/weights/best.pt format=openvino img
 
 The edge runtime does not require the Ultralytics training package. It uses the
 exported OpenVINO model under `weights/best_openvino_model`.
+
+## Post-Model Counting Logic
+
+After training, I do not rely on the detector alone for the final count. A raw
+detection can flicker, a bounding box can shake as the carcass sways, and
+white-colored litter can still appear as a false positive. I handle these
+issues in software by putting a tracking and tripwire layer after the model.
+
+The active setup uses two normalized horizontal tripwire lines to create a
+small counting corridor:
+
+```yaml
+counter:
+  Polylines:
+    - [[1.00, 0.40], [0.00, 0.40]]
+    - [[1.00, 0.20], [0.00, 0.20]]
+  CrossingDirections: [left-to-right, left-to-right]
+  CrossingOrder: [1, 2]
+  AnchorPoint: TopCenter
+  state_threshold: 3
+```
+
+The runtime logic is:
+
+1. Filter weak detections first using the configured confidence threshold.
+2. Apply optional size sanity checks after the confidence threshold. This
+   rejects boxes whose width, height, area, or aspect ratio does not look like a
+   real carcass. This is useful for the remaining white-litter false positives.
+3. Pass the remaining detections into ByteTrack so one carcass can keep an
+   identity across multiple frames, even if the detector confidence fluctuates.
+4. Convert each tracked bounding box into an anchor point. The current config
+   uses `TopCenter`, which was selected for this camera/conveyor view.
+5. For each surviving track, record which side of each tripwire the anchor is
+   on.
+6. Require several side observations using `state_threshold` before accepting a
+   crossing. This reduces false counts from bbox shaking, carcass sway, and
+   one-frame detector flicker.
+7. Count only when the same track crosses line `1` and then line `2` in
+   `CrossingOrder`. A single detection near the line is not enough.
+8. Treat reverse-order movement separately so reverse movement can subtract
+   from the count when reverse-decrease counting is enabled.
+
+An ROI filter could also be applied before counting to ignore detections
+outside the conveyor/counting area. I chose not to enable it for this test
+because the scene is simple and the combination of confidence threshold, size
+sanity check, ByteTrack, and ordered tripwires was enough. The design still
+leaves room to add ROI filtering if the camera view becomes more cluttered.
+
+This handles the main failure modes:
+
+- False positives: litter must pass confidence, size sanity, tracking, and the
+  ordered tripwire sequence before it can be counted.
+- False negatives: a missed frame does not immediately break the count because
+  the tracker and side-history logic look across multiple frames.
+- Bbox shaking: the anchor must show a side transition over several
+  observations, not just jump across a line once.
+- Carcass swaying: the two-line corridor requires ordered movement through the
+  gate, which is more reliable than a single tripwire hit.
 
 ## Requirement Coverage
 
@@ -136,7 +142,7 @@ SharedState (app/state.py)
    v
 CV engine (app/engine.py)
    |
-   | OpenCV video + OpenVINO detector + IoU tracker
+   | OpenCV video + OpenVINO detector + ByteTrack
    v
 Tripwire counter (app/counter.py)
 ```
@@ -160,50 +166,6 @@ Ultralytics, image size `640x640`, task `detect`, and one class:
 names:
   0: object
 ```
-
-## Counting Logic
-
-The counter is implemented in `app/counter.py`.
-
-Each tracked detection becomes:
-
-```text
-track_id -> bbox -> configured anchor point -> side of each tripwire
-```
-
-The active config uses two normalized horizontal tripwires:
-
-```yaml
-counter:
-  Polylines:
-    - [[1.00, 0.40], [0.00, 0.40]]
-    - [[1.00, 0.20], [0.00, 0.20]]
-  CrossingDirections: [left-to-right, left-to-right]
-  CrossingOrder: [1, 2]
-  state_threshold: 3
-  AnchorPoint: TopCenter
-```
-
-Important details:
-
-- Coordinates are normalized to the frame.
-- Only `counter.Unit: Normalized` is currently supported.
-- `CrossingDirections` describes movement across a side boundary, not the
-  literal point order of the polyline.
-- Each object receives a UUID in per-track memory.
-- Each track stores rolling side history per line.
-- A crossing is considered only after `counter.state_threshold` side
-  observations.
-- A positive count is emitted when a track crosses all lines in
-  `CrossingOrder`.
-- A reverse sequence can subtract `1` when reverse-decrease counting is enabled.
-- Optional size sanity filtering can reject detections outside configured
-  width, height, area, and aspect-ratio ranges.
-
-This combination is meant to avoid counting every raw detection. The model can
-flicker for a few frames, boxes can wobble as carcasses sway, and tracker IDs
-can be imperfect; the ordered gate sequence and side-history check make the
-count depend on motion through a corridor rather than a single frame.
 
 ## State And Control Logic
 
@@ -255,13 +217,7 @@ keeps control requests responsive while the CV loop is busy.
 
 ## Web Interface
 
-The dashboard is served from `app/templates/index.html` at:
-
-```text
-http://127.0.0.1:8000/
-```
-
-It displays:
+The dashboard served from `app/templates/index.html` displays:
 
 - Live annotated video stream from `GET /stream`.
 - Current session count from `GET /state`.
@@ -306,7 +262,7 @@ sheep_carcass_counting/
 |   |-- engine.py                 # OpenCV/OpenVINO worker loop
 |   |-- engine_helpers.py         # older/shared helper functions
 |   |-- main.py                   # FastAPI routes, UI, stream, lifecycle
-|   |-- openvino_inference.py     # OpenVINO detector + IoU tracker
+|   |-- openvino_inference.py     # OpenVINO detector + tracker
 |   |-- runtime_logging.py        # JSON-lines runtime logger
 |   |-- state.py                  # shared state, metrics, event buffer
 |   `-- templates/
@@ -375,22 +331,10 @@ Selected environment variables can override runtime paths/settings for quick
 testing, including `VIDEO_PATH`, `MODEL_PATH`, `OUTPUT_VIDEO_PATH`, `MIN_HITS`,
 and `JPEG_QUALITY`.
 
-## Linux Setup
+## Docker Details
 
-Put input videos under `videos/` and keep model artifacts under `weights/`.
-Then build and run the Linux/headless service:
-
-```bash
-chmod +x run_system.sh
-./run_system.sh
-```
-
-The script creates `videos/` and `outputs/` if needed, checks for Docker
-Compose, and runs:
-
-```bash
-docker compose up --build sheep-counter
-```
+The run script creates `videos/` and `outputs/` if needed, checks for Docker
+Compose, and starts the service with `docker compose up --build sheep-counter`.
 
 The Docker Compose service mounts:
 
@@ -412,16 +356,10 @@ Check logs:
 docker compose logs --tail 60 sheep-counter
 ```
 
-Open the dashboard from another machine or browser:
+Open the dashboard from another machine:
 
 ```text
 http://<edge-unit-ip>:8000/
-```
-
-For local testing on the same machine:
-
-```text
-http://127.0.0.1:8000/
 ```
 
 ## Logging And Diagnostics
