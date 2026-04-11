@@ -1,4 +1,15 @@
+# Python virtual environments
+venv/
+.venv/
+venv_wsl_test/
+env/
+ENV/
+.env/
+
+# Python
 *.pyc
+
+# Media files
 *.png
 *.jpg
 *.jpeg

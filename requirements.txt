@@ -2,19 +2,17 @@
 
 # Web framework
 fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
+uvicorn>=0.29.0
+httpx>=0.27.0
+jinja2>=3.1.0
+python-multipart>=0.0.9
 pyyaml>=6.0.0
 
 # Computer vision (headless)
 opencv-python-headless>=4.9.0
 
-# YOLO detection  
-ultralytics>=8.2.0
-torch>=2.0.0
-
-# Numeric computing  
-numpy>=1.24.0
-
-# OpenVINO CPU runtime (no GPU/NPU support)
-openvino>=2024.0.0
+# Object detection & tracking
+openvino>=2026.1.0,<2027.0.0
+scipy>=1.15.0
+numpy>=2.0.0
 

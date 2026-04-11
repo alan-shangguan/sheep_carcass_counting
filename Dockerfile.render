@@ -1,13 +1,17 @@
-FROM ultralytics/ultralytics:latest-cpu
+FROM python:3.10-slim
 
 WORKDIR /work
 
-# Preinstall render-time dependencies once at image build time so runtime
-# renders do not trigger Ultralytics AutoUpdate each run.
-RUN python -m pip install --no-cache-dir \
-    pyyaml \
-    fastapi \
-    uvicorn \
-    jinja2 \
-    openvino>=2024.0.0 \
-    lap>=0.5.12
+# Minimal system packages for OpenCV/OpenVINO render-time use.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libglib2.0-0 \
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
+    libsm6 \
+    libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN python -m pip install --no-cache-dir -r requirements.txt

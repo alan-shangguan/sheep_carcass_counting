@@ -43,25 +43,23 @@ counter:
   # Points go LEFT to RIGHT (0.0 to 1.0) to match "left-to-right" direction label
   Polylines:
     - [[0.00, 0.40], [1.00, 0.40]]
-    - [[0.00, 0.20], [1.00, 0.20]]
 
   # Motion direction across each polyline side, not the point order itself.
-  CrossingDirections: [left-to-right, left-to-right]
+  CrossingDirections: [left-to-right]
 
   # 1-based order of tripwires that define the corridor.
-  CrossingOrder: [1, 2]
+  # Using just line 1 to count all objects crossing that line left-to-right
+  CrossingOrder: [1]
 
   # Minimum state observations before detecting a crossing. Lower = more lenient tracking.
   state_threshold: 3
-
-  # When true, reverse travel across the ordered lines decrements the count.
-  reverse_decrease_counting: true
 
   # Only normalized coordinates are currently supported.
   Unit: Normalized
 
   # Supported: TopCenter, BottomCenter, BottomRight
-  AnchorPoint: TopCenter
+  # Using BottomCenter for better carcass center-of-mass tracking
+  AnchorPoint: BottomCenter
 
   # Consecutive stable frames required before a zone is trusted.
   min_hits: 3

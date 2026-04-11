@@ -7,7 +7,7 @@ All inter-thread communication goes through this single object.
 The engine thread writes frames, counts, and status.
 The API layer reads/writes control flags (running, reset_requested).
 The lock must be held for the minimum time necessary – never hold it
-during long operations like YOLO inference or JPEG encoding.
+during long operations like model inference or JPEG encoding.
 """
 
 from __future__ import annotations
@@ -30,6 +30,18 @@ class SharedState:
 
     # Human-readable description of the current engine state.
     status_text: str = "Idle"
+
+    # Optional runtime video source switch requested by the UI/API.
+    requested_video_path: str | None = None
+
+    # Request to seek current video back to frame 0.
+    restart_video_requested: bool = False
+
+    # Video file currently opened by the engine loop.
+    current_video_path: str = ""
+
+    # Pause frame advancement while keeping stream alive.
+    video_paused: bool = False
 
     # Set to True by POST /reset.  The engine clears count and
     # track_memory on the next iteration, then immediately sets this back
@@ -74,6 +86,18 @@ class SharedState:
     last_inference_latency_ms: float = 0.0
     avg_inference_latency_ms: float = 0.0
     _last_frame_tick: float = 0.0
+
+    # Text lines currently rendered as frame overlays by the engine.
+    frame_overlay_lines: list[str] = field(default_factory=list)
+
+    # Runtime-adjustable model parameters controlled by Web UI.
+    runtime_conf_threshold: float = 0.25
+    runtime_iou_threshold: float = 0.45
+    runtime_skip_frame: int = 1
+    runtime_polylines: list[list[tuple[float, float]]] = field(default_factory=list)
+    runtime_min_hits: int = 3
+    runtime_state_threshold: int = 3
+    runtime_reverse_decrease_counting: bool = False
 
     # ------------------------------------------------------------------ #
     # Per-track counting memory – owned by engine/counter, cleared on     #
@@ -137,6 +161,10 @@ class SharedState:
             return {
                 "running": self.running,
                 "status_text": self.status_text,
+                "requested_video_path": self.requested_video_path,
+                "restart_video_requested": self.restart_video_requested,
+                "current_video_path": self.current_video_path,
+                "video_paused": self.video_paused,
                 "count": self.count,
                 "reset_requested": self.reset_requested,
                 "latest_jpeg_ready": self.latest_jpeg is not None,
@@ -151,6 +179,14 @@ class SharedState:
                 "loop_fps": self.loop_fps,
                 "last_inference_latency_ms": self.last_inference_latency_ms,
                 "avg_inference_latency_ms": self.avg_inference_latency_ms,
+                "frame_overlay_lines": list(self.frame_overlay_lines),
+                "runtime_conf_threshold": self.runtime_conf_threshold,
+                "runtime_iou_threshold": self.runtime_iou_threshold,
+                "runtime_skip_frame": self.runtime_skip_frame,
+                "runtime_polylines": [list(polyline) for polyline in self.runtime_polylines],
+                "runtime_min_hits": self.runtime_min_hits,
+                "runtime_state_threshold": self.runtime_state_threshold,
+                "runtime_reverse_decrease_counting": self.runtime_reverse_decrease_counting,
                 "uptime_seconds": max(0.0, time.time() - self.started_at),
             }
 

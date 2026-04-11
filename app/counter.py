@@ -102,19 +102,6 @@ def _normalise_direction(direction: str) -> str:
     return normalised
 
 
-def _direction_allows_delta(direction: str, line_delta: int) -> bool:
-    """Return whether a configured direction allows this line crossing delta.
-
-    The delta sign is derived from side changes relative to polyline point order.
-    Positive means left->right, negative means right->left.
-    """
-    if direction in {"left_to_right", "top_to_bottom"}:
-        return line_delta > 0
-    if direction in {"right_to_left", "bottom_to_top"}:
-        return line_delta < 0
-    return True
-
-
 def process_frame(
     tracks: list[dict],
     track_memory: dict,
@@ -128,7 +115,6 @@ def process_frame(
     anchor_point: str = "topcenter",
     min_hits: int = 3,
     state_threshold: int = 3,
-    reverse_decrease_counting: bool = False,
 ) -> int:
     """
     Evaluate one video frame and return the signed count delta.
@@ -182,19 +168,12 @@ def process_frame(
             if line_delta == 0:
                 continue
 
-            configured_direction = normalised_directions[line_index - 1]
-            if line_delta < 0 and reverse_decrease_counting:
-                # Allow reverse travel to generate decrement events when enabled.
-                pass
-            elif not _direction_allows_delta(configured_direction, line_delta):
-                continue
-
             side_history[:] = [last_side]
             line_events.append(
                 {
                     "line_index": line_index,
                     "line_delta": line_delta,
-                    "direction": configured_direction,
+                    "direction": normalised_directions[line_index - 1],
                     "first_zone": first_side,
                     "last_zone": last_side,
                 }

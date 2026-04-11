@@ -24,20 +24,25 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       background: var(--bg-primary);
       color: var(--text-primary);
-      padding: 20px;
+      padding: 10px;
       min-height: 100vh;
+      overflow-y: auto;
       line-height: 1.6;
     }
 
     .container {
-      max-width: 1400px;
+      max-width: 1600px;
       margin: 0 auto;
+      min-height: calc(100vh - 20px);
+      display: grid;
+      grid-template-rows: auto auto auto;
+      gap: 12px;
     }
 
     header {
-      margin-bottom: 32px;
+      margin-bottom: 0;
       border-bottom: 1px solid var(--border-color);
-      padding-bottom: 20px;
+      padding-bottom: 10px;
     }
 
     h1 {
@@ -81,9 +86,11 @@
     /* Layout: 2-column on desktop, 1-column on mobile */
     .main-grid {
       display: grid;
-      grid-template-columns: 1fr 350px;
-      gap: 20px;
-      margin-bottom: 20px;
+      grid-template-columns: 25% 75%;
+      gap: 12px;
+      margin-bottom: 0;
+      min-height: 0;
+      align-items: start;
     }
 
     @media (max-width: 1024px) {
@@ -100,6 +107,9 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
+      min-height: 200px;
+      width: 100%;
+      justify-self: center;
     }
 
     .stream-header {
@@ -119,14 +129,18 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 400px;
+      min-height: 170px;
       position: relative;
       overflow: hidden;
+      width: 100%;
+      max-width: none;
+      margin: 0 auto;
     }
 
     #stream-img {
       width: 100%;
-      height: 100%;
+      max-width: none;
+      height: auto;
       object-fit: contain;
       display: block;
     }
@@ -141,9 +155,49 @@
 
     /* ---- Sidebar (Stats & Controls) ---- */
     .sidebar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      min-height: 0;
+      overflow: visible;
+      align-items: start;
+    }
+
+    .sidebar-col {
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    /* Bigger typography for right sidebar readability */
+    .sidebar .controls-label,
+    .sidebar .metric-label,
+    .sidebar .overlay-header,
+    .sidebar .events-header,
+    .sidebar .config-title,
+    .sidebar .state-box-label,
+    .sidebar .count-label {
+      font-size: 0.95rem;
+    }
+
+    .sidebar button {
+      font-size: 0.98rem;
+      padding: 13px 16px;
+    }
+
+    .sidebar .overlay-body,
+    .sidebar .events-body,
+    .sidebar .config-grid,
+    .sidebar .config-item,
+    .sidebar #val-status,
+    .sidebar .status-message,
+    .sidebar select {
+      font-size: 0.95rem;
+    }
+
+    .sidebar .metric-value {
+      font-size: 1.45rem;
     }
 
     /* ---- Big Count Display ---- */
@@ -151,8 +205,16 @@
       background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 24px;
+      padding: 14px;
       text-align: center;
+    }
+
+    .count-hero {
+      grid-column: 1 / -1;
+      background: radial-gradient(circle at top, rgba(245, 158, 11, 0.24), rgba(20, 24, 41, 0.95));
+      border: 2px solid rgba(245, 158, 11, 0.75);
+      box-shadow: 0 0 20px rgba(245, 158, 11, 0.28);
+      padding: 18px;
     }
 
     .count-label {
@@ -165,10 +227,29 @@
     }
 
     .count-value {
-      font-size: 3.5rem;
+      font-size: 2.6rem;
       font-weight: 700;
       color: var(--accent-yellow);
       font-variant-numeric: tabular-nums;
+    }
+
+    .count-hero .count-label {
+      font-size: 1.05rem;
+      letter-spacing: 1.4px;
+      margin-bottom: 8px;
+      color: #ffd48a;
+    }
+
+    .count-hero .count-value {
+      font-size: 4.4rem;
+      line-height: 1;
+      text-shadow: 0 0 16px rgba(245, 158, 11, 0.45);
+      animation: countPulse 2s ease-in-out infinite;
+    }
+
+    @keyframes countPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
     }
 
     /* ---- State Box ---- */
@@ -215,10 +296,10 @@
       background: var(--bg-secondary);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 16px;
+      padding: 12px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
     }
 
     .controls-label {
@@ -273,15 +354,15 @@
     .metrics-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 16px;
-      margin-top: 20px;
+      gap: 10px;
+      margin-top: 8px;
     }
 
     .metric-card {
       background: var(--bg-secondary);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      padding: 16px;
+      padding: 10px;
     }
 
     .metric-label {
@@ -294,10 +375,88 @@
     }
 
     .metric-value {
-      font-size: 1.5rem;
+      font-size: 1.2rem;
       font-weight: 700;
       color: var(--accent-blue);
       font-variant-numeric: tabular-nums;
+    }
+
+    .overlay-panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .overlay-header {
+      padding: 10px 12px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-color);
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .overlay-body {
+      max-height: 220px;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.75rem;
+      color: var(--text-primary);
+    }
+
+    .overlay-line {
+      padding: 6px 8px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: var(--bg-tertiary);
+      overflow-wrap: anywhere;
+    }
+
+    .runtime-controls {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(90px, 1fr));
+      gap: 8px;
+      padding: 10px;
+      border-bottom: 1px solid var(--border-color);
+      background: rgba(31, 36, 55, 0.6);
+    }
+
+    .runtime-controls label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .runtime-controls input {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+    }
+
+    .runtime-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .runtime-note {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      opacity: 0.9;
     }
 
     /* ---- Events Log ---- */
@@ -308,7 +467,7 @@
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      max-height: 500px;
+      min-height: 0;
     }
 
     .events-header {
@@ -356,6 +515,113 @@
       text-align: center;
       color: var(--text-secondary);
       opacity: 0.6;
+    }
+
+    .config-panel {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 0;
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 1.6fr 1.4fr;
+      gap: 12px;
+      min-height: 0;
+      align-items: start;
+    }
+
+    .left-stack {
+      display: grid;
+      grid-template-rows: auto;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .right-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .right-lower-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 12px;
+      min-height: 0;
+      align-items: start;
+    }
+
+    .events-panel,
+    .config-panel,
+    .overlay-panel {
+      max-height: 360px;
+    }
+
+    @media (max-width: 1280px) {
+      .container {
+        grid-template-rows: auto auto auto;
+        overflow: auto;
+      }
+
+      body {
+        height: auto;
+        overflow: auto;
+      }
+
+      .bottom-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .right-lower-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 1500px) and (min-width: 1281px) {
+      .sidebar {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .config-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .config-item {
+      padding: 8px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: var(--bg-tertiary);
+      overflow-wrap: anywhere;
+    }
+
+    .config-item strong {
+      color: var(--text-primary);
+      display: block;
+      margin-bottom: 4px;
     }
 
     /* Scrollbar styling */
@@ -421,67 +687,118 @@
 
       <!-- Sidebar: Count, State, Controls -->
       <div class="sidebar">
-        <!-- Big Count Display -->
-        <div class="count-box">
-          <div class="count-label">Session Count</div>
+        <div class="count-box count-hero">
+          <div class="count-label">Core Metric - Session Count</div>
           <div class="count-value" id="val-count">0</div>
         </div>
 
-        <!-- State Indicator -->
-        <div class="state-box">
-          <div class="state-box-label">Engine State</div>
-          <div class="state-badge running" id="val-state">Stopped</div>
+        <div class="sidebar-col">
+          <!-- State Indicator -->
+          <div class="state-box">
+            <div class="state-box-label">Engine State</div>
+            <div class="state-badge running" id="val-state">Stopped</div>
+          </div>
+
+          <!-- Controls -->
+          <div class="controls-panel">
+            <div class="controls-label">Actions</div>
+            <div class="controls-label" style="margin-top: 6px;">Video Source</div>
+            <select id="video-select" onchange="switchVideoFromList(true)" style="padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary);"></select>
+            <input id="video-file-input" type="file" accept=".mp4,.mkv,.avi,.mov,.m4v" style="display:none" onchange="handleLocalVideoChosen(event)" />
+            <button class="btn-reset" onclick="switchVideoFromList()">Play Selected Video</button>
+            <button class="btn-reset" onclick="selectVideoFile()">Upload Video From PC</button>
+            <button class="btn-reset" onclick="restartCurrentVideo()">Restart Video From Beginning</button>
+            <button class="btn-stop" id="btn-video-pause" onclick="toggleVideoPause()">Pause Video</button>
+            <button class="btn-start" onclick="sendCmd('start')">Start</button>
+            <button class="btn-stop" onclick="sendCmd('stop')">Stop</button>
+            <button class="btn-reset" onclick="sendCmd('reset')">Reset Count</button>
+            <div class="status-message" id="cmd-status"></div>
+          </div>
         </div>
 
-        <!-- Controls -->
-        <div class="controls-panel">
-          <div class="controls-label">Actions</div>
-          <button class="btn-start" onclick="sendCmd('start')">Start</button>
-          <button class="btn-stop" onclick="sendCmd('stop')">Stop</button>
-          <button class="btn-reset" onclick="sendCmd('reset')">Reset Count</button>
-          <div class="status-message" id="cmd-status"></div>
-        </div>
-      </div>
-    </div>
+        <div class="sidebar-col">
+          <div class="overlay-panel">
+            <div class="overlay-header">Runtime Settings + Live Overlay</div>
+            <div class="runtime-controls">
+              <div>
+                <label for="rt-conf">Conf</label>
+                <input id="rt-conf" type="number" min="0" max="1" step="0.01" />
+              </div>
+              <div>
+                <label for="rt-iou">IoU</label>
+                <input id="rt-iou" type="number" min="0" max="1" step="0.01" />
+              </div>
+              <div>
+                <label for="rt-skip">Skip Frame</label>
+                <input id="rt-skip" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <label for="rt-min-hits">Min Hits</label>
+                <input id="rt-min-hits" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <label for="rt-state-threshold">State Threshold</label>
+                <input id="rt-state-threshold" type="number" min="2" step="1" />
+              </div>
+              <div>
+                <label for="rt-line1-y">Tripwire L1 Y</label>
+                <input id="rt-line1-y" type="number" min="0" max="1" step="0.01" />
+              </div>
+              <div>
+                <label for="rt-line2-y">Tripwire L2 Y</label>
+                <input id="rt-line2-y" type="number" min="0" max="1" step="0.01" />
+              </div>
+              <div>
+                <label for="rt-reverse">Reverse Decrease</label>
+                <input id="rt-reverse" type="checkbox" style="width:auto; transform: scale(1.25); margin-top:10px;" />
+              </div>
+              <div class="runtime-actions">
+                <button class="btn-reset" onclick="applyRuntimeSettings()">Apply Runtime Settings</button>
+                <span class="runtime-note">Effective immediately</span>
+              </div>
+            </div>
+            <div class="overlay-body" id="overlay-lines">
+              <div class="overlay-line">Waiting for frame overlay data...</div>
+            </div>
+          </div>
 
-    <!-- Metrics & Events -->
-    <div style="display: grid; grid-template-columns: 1fr 300px; gap: 20px;">
-      <!-- Performance Metrics -->
-      <div>
-        <h2 style="font-size: 1rem; margin-bottom: 16px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Performance Metrics</h2>
-        <div class="metrics-grid">
-          <div class="metric-card">
-            <div class="metric-label">Loop FPS</div>
-            <div class="metric-value" id="val-fps">0.0</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Frames Processed</div>
-            <div class="metric-value" id="val-frames">0</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Inference Runs</div>
-            <div class="metric-value" id="val-inferences">0</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Inference Latency (ms)</div>
-            <div class="metric-value" id="val-latency">0.0</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Uptime (s)</div>
-            <div class="metric-value" id="val-uptime">0</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Status</div>
-            <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 8px;" id="val-status">--</div>
+          <div class="events-panel">
+            <div class="events-header">Recent Events</div>
+            <div class="events-body" id="events-list">
+              <div class="event-empty">No events</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Recent Events -->
-      <div class="events-panel">
-        <div class="events-header">Recent Events</div>
-        <div class="events-body" id="events-list">
-          <div class="event-empty">No events</div>
+        <div class="sidebar-col">
+          <h2 style="font-size: 0.9rem; margin-bottom: 6px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Performance Metrics</h2>
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">Loop FPS</div>
+              <div class="metric-value" id="val-fps">0.0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Frames Processed</div>
+              <div class="metric-value" id="val-frames">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Inference Runs</div>
+              <div class="metric-value" id="val-inferences">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Inference Latency (ms)</div>
+              <div class="metric-value" id="val-latency">0.0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Uptime (s)</div>
+              <div class="metric-value" id="val-uptime">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Status</div>
+              <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 8px;" id="val-status">--</div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -489,6 +806,67 @@
 
   <script>
     let pollInterval = null;
+
+    async function loadRuntimeSettings() {
+      try {
+        const res = await fetch('/runtime-settings');
+        if (!res.ok) throw new Error('runtime settings endpoint failed');
+        const runtime = await res.json();
+        document.getElementById('rt-conf').value = Number(runtime.conf_threshold ?? 0.25).toFixed(2);
+        document.getElementById('rt-iou').value = Number(runtime.iou_threshold ?? 0.45).toFixed(2);
+        document.getElementById('rt-skip').value = String(runtime.skip_frame ?? 1);
+        document.getElementById('rt-min-hits').value = String(runtime.min_hits ?? 3);
+        document.getElementById('rt-state-threshold').value = String(runtime.state_threshold ?? 3);
+        document.getElementById('rt-reverse').checked = Boolean(runtime.reverse_decrease_counting);
+        const polys = runtime.tripwire_polylines || [];
+        if (polys.length >= 2) {
+          document.getElementById('rt-line1-y').value = Number(polys[0][0][1]).toFixed(2);
+          document.getElementById('rt-line2-y').value = Number(polys[1][0][1]).toFixed(2);
+        }
+      } catch (err) {
+        console.error('loadRuntimeSettings failed:', err);
+      }
+    }
+
+    async function applyRuntimeSettings() {
+      const statusEl = document.getElementById('cmd-status');
+      const conf = parseFloat(document.getElementById('rt-conf').value);
+      const iou = parseFloat(document.getElementById('rt-iou').value);
+      const skip = parseInt(document.getElementById('rt-skip').value, 10);
+      const minHits = parseInt(document.getElementById('rt-min-hits').value, 10);
+      const stateThreshold = parseInt(document.getElementById('rt-state-threshold').value, 10);
+      const line1Y = parseFloat(document.getElementById('rt-line1-y').value);
+      const line2Y = parseFloat(document.getElementById('rt-line2-y').value);
+      const reverseDecrease = document.getElementById('rt-reverse').checked;
+
+      statusEl.textContent = 'Applying runtime settings...';
+      try {
+        const res = await fetch('/runtime-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conf_threshold: conf,
+            iou_threshold: iou,
+            skip_frame: skip,
+            min_hits: minHits,
+            state_threshold: stateThreshold,
+            reverse_decrease_counting: reverseDecrease,
+            line1_y: line1Y,
+            line2_y: line2Y,
+          }),
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          statusEl.textContent = payload.error || 'Runtime settings update failed';
+          return;
+        }
+        statusEl.textContent = `Applied: conf=${payload.conf_threshold.toFixed(2)} iou=${payload.iou_threshold.toFixed(2)} skip=${payload.skip_frame} min_hits=${payload.min_hits}`;
+        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      } catch (err) {
+        statusEl.textContent = 'Runtime settings update failed';
+        console.error('applyRuntimeSettings failed:', err);
+      }
+    }
 
     /**
      * Send a command to the backend
@@ -506,21 +884,168 @@
       }
     }
 
+    async function loadVideoFiles() {
+      try {
+        const res = await fetch('/videos');
+        if (!res.ok) throw new Error('Failed to load videos');
+        const data = await res.json();
+        const select = document.getElementById('video-select');
+        const videos = data.videos || [];
+
+        if (videos.length === 0) {
+          select.innerHTML = '<option value="">No video files found</option>';
+          select.disabled = true;
+          return;
+        }
+
+        select.disabled = false;
+        select.innerHTML = videos
+          .map(path => `<option value="${path}">${path}</option>`)
+          .join('');
+
+        if (data.current_video_path) {
+          select.value = data.current_video_path;
+        }
+      } catch (err) {
+        console.error('loadVideoFiles failed:', err);
+      }
+    }
+
+    async function selectVideoFile() {
+      const input = document.getElementById('video-file-input');
+      if (input) {
+        input.value = '';
+        input.click();
+      }
+    }
+
+    async function handleLocalVideoChosen(event) {
+      const statusEl = document.getElementById('cmd-status');
+      const file = event.target.files && event.target.files[0];
+      if (!file) {
+        return;
+      }
+
+      statusEl.textContent = `Uploading ${file.name}...`;
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/videos/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          statusEl.textContent = payload.error || 'Video upload failed';
+          return;
+        }
+
+        await loadVideoFiles();
+        const select = document.getElementById('video-select');
+        if (select && payload.requested_video_path) {
+          select.value = payload.requested_video_path;
+        }
+        statusEl.textContent = `Uploaded and queued: ${payload.requested_video_path}`;
+        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      } catch (err) {
+        statusEl.textContent = 'Video upload failed';
+        console.error('handleLocalVideoChosen failed:', err);
+      }
+    }
+
+    async function switchVideoFromList(isAuto = false) {
+      const select = document.getElementById('video-select');
+      const statusEl = document.getElementById('cmd-status');
+      const path = select.value;
+      if (!path) {
+        if (!isAuto) {
+          statusEl.textContent = 'No video selected';
+        }
+        return;
+      }
+
+      statusEl.textContent = `Switching to ${path}...`;
+      try {
+        const res = await fetch('/videos/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path })
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          statusEl.textContent = payload.error || 'Video switch failed';
+          return;
+        }
+        statusEl.textContent = `Now playing: ${payload.requested_video_path}`;
+        setTimeout(() => { statusEl.textContent = ''; }, 2500);
+      } catch (err) {
+        statusEl.textContent = 'Video switch failed';
+        console.error('switchVideoFromList failed:', err);
+      }
+    }
+
+    async function restartCurrentVideo() {
+      const statusEl = document.getElementById('cmd-status');
+      statusEl.textContent = 'Restarting video from beginning...';
+      try {
+        const res = await fetch('/videos/restart', { method: 'POST' });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          statusEl.textContent = payload.error || 'Video restart failed';
+          return;
+        }
+        statusEl.textContent = `Restart queued: ${payload.video_path}`;
+        setTimeout(() => { statusEl.textContent = ''; }, 2500);
+      } catch (err) {
+        statusEl.textContent = 'Video restart failed';
+        console.error('restartCurrentVideo failed:', err);
+      }
+    }
+
+    async function toggleVideoPause() {
+      const statusEl = document.getElementById('cmd-status');
+      const btn = document.getElementById('btn-video-pause');
+      const isPaused = btn.getAttribute('data-paused') === 'true';
+      const endpoint = isPaused ? '/videos/resume' : '/videos/pause';
+      const actionText = isPaused ? 'Resuming video...' : 'Pausing video...';
+      statusEl.textContent = actionText;
+
+      try {
+        const res = await fetch(endpoint, { method: 'POST' });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {
+          statusEl.textContent = payload.error || 'Video pause toggle failed';
+          return;
+        }
+        const pausedNow = Boolean(payload.video_paused);
+        btn.textContent = pausedNow ? 'Resume Video' : 'Pause Video';
+        btn.setAttribute('data-paused', pausedNow ? 'true' : 'false');
+        statusEl.textContent = pausedNow ? 'Video paused' : 'Video resumed';
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+      } catch (err) {
+        statusEl.textContent = 'Video pause toggle failed';
+        console.error('toggleVideoPause failed:', err);
+      }
+    }
+
     /**
      * Poll both /state and /health endpoints
      */
     async function pollState() {
       try {
-        // Fetch state and health in parallel
-        const [stateRes, healthRes] = await Promise.all([
+        // Fetch state, health, and readiness in parallel
+        const [stateRes, healthRes, readyRes] = await Promise.all([
           fetch('/state'),
-          fetch('/health')
+          fetch('/health'),
+          fetch('/ready')
         ]);
 
-        if (!stateRes.ok || !healthRes.ok) throw new Error('HTTP error');
+        if (!stateRes.ok || !healthRes.ok || !readyRes.ok) throw new Error('HTTP error');
 
         const state = await stateRes.json();
         const health = await healthRes.json();
+        const ready = await readyRes.json();
 
         // Update count and state
         document.getElementById('val-count').textContent = state.count;
@@ -533,6 +1058,11 @@
           stateEl.className = 'state-badge stopped';
         }
 
+        const videoPauseBtn = document.getElementById('btn-video-pause');
+        const paused = Boolean(state.video_paused);
+        videoPauseBtn.textContent = paused ? 'Resume Video' : 'Pause Video';
+        videoPauseBtn.setAttribute('data-paused', paused ? 'true' : 'false');
+
         // Update health metrics
         document.getElementById('val-fps').textContent = health.loop_fps.toFixed(1);
         document.getElementById('val-frames').textContent = health.frames_processed;
@@ -540,6 +1070,7 @@
         document.getElementById('val-latency').textContent = health.last_inference_latency_ms.toFixed(1);
         document.getElementById('val-uptime').textContent = Math.floor(health.uptime_seconds);
         document.getElementById('val-status').textContent = state.status;
+        updateFrameOverlayLines(state.frame_overlay_lines || []);
 
         // Update header health indicator
         const healthEl = document.getElementById('health-indicator');
@@ -551,7 +1082,12 @@
           healthEl.className = 'status-indicator dead';
           healthTextEl.textContent = 'Engine Idle';
         }
-        document.getElementById('model-text').textContent = health.model_ready ? 'Ready' : 'Not Ready';
+
+        const readyTextEl = document.getElementById('readiness-text');
+        readyTextEl.textContent = ready.ready ? 'Ready' : 'Not Ready';
+        readyTextEl.style.color = ready.ready ? 'var(--accent-green)' : 'var(--accent-red)';
+
+        document.getElementById('model-text').textContent = health.model_ready ? 'Ready' : 'Model unavailable';
 
         // Fetch and display recent events
         const eventsRes = await fetch('/events/recent');
@@ -567,6 +1103,18 @@
       }
     }
 
+    function updateFrameOverlayLines(lines) {
+      const container = document.getElementById('overlay-lines');
+      if (!Array.isArray(lines) || lines.length === 0) {
+        container.innerHTML = '<div class="overlay-line">No overlay text available yet</div>';
+        return;
+      }
+
+      container.innerHTML = lines
+        .map(line => `<div class="overlay-line">${line}</div>`)
+        .join('');
+    }
+
     /**
      * Update the events log display
      */
@@ -577,13 +1125,12 @@
         return;
       }
 
-      const now = Date.now();
       const html = events.slice(-10).reverse().map(evt => {
-        const ts = new Date(evt.timestamp);
+        const ts = new Date((evt.ts || 0) * 1000);
         const rel = formatRelativeTime(ts);
         return `<div class="event-item">
           <span class="event-time">${rel}</span>
-          <span class="event-type">${evt.event_type}</span>
+          <span class="event-type">${evt.type || 'event'}</span>
         </div>`;
       }).join('');
       container.innerHTML = html;
@@ -593,7 +1140,9 @@
      * Format timestamp relative to now
      */
     function formatRelativeTime(date) {
-      const diff = Date.now() - date.getTime();
+      const t = date.getTime();
+      if (!Number.isFinite(t) || t <= 0) return '--';
+      const diff = Math.max(0, Date.now() - t);
       const secs = Math.floor(diff / 1000);
       if (secs < 60) return `${secs}s ago`;
       const mins = Math.floor(secs / 60);
@@ -619,6 +1168,8 @@
     };
 
     // Kick off polling
+    loadVideoFiles();
+    loadRuntimeSettings();
     pollState();
     pollInterval = setInterval(pollState, 800);
 

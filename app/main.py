@@ -28,7 +28,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import shutil
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -37,7 +39,7 @@ if __package__ in (None, ""):
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi import Query
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -49,6 +51,28 @@ from app.engine import run_engine
 from app.state import SharedState, shared_state
 
 CONFIG = load_config()
+
+_VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".m4v"}
+
+
+def _get_videos_root() -> Path:
+    configured = Path(CONFIG.video.path)
+    root = configured.parent if str(configured.parent) not in ("", ".") else Path("videos")
+    if not root.is_absolute():
+        root = (Path.cwd() / root).resolve()
+    return root
+
+
+def _list_video_files() -> list[str]:
+    root = _get_videos_root()
+    if not root.exists() or not root.is_dir():
+        return []
+
+    videos: list[str] = []
+    for path in sorted(root.iterdir()):
+        if path.is_file() and path.suffix.lower() in _VIDEO_EXTENSIONS:
+            videos.append(f"videos/{path.name}")
+    return videos
 
 # ---------------------------------------------------------------------------
 # Template renderer
@@ -70,6 +94,12 @@ def _validate_startup() -> list[str]:
     if not model_path.exists():
         errors.append(f"MODEL_PATH does not exist: {model_path}")
 
+    try:
+        import openvino  # noqa: F401
+        import scipy  # noqa: F401
+    except Exception as exc:
+        errors.append(f"openvino and/or scipy are required but unavailable: {exc}")
+
     if CONFIG.counter.state_threshold < 2:
         errors.append("counter.state_threshold should be >= 2 for stable crossing decisions")
 
@@ -90,6 +120,13 @@ async def lifespan(app: FastAPI):
     with shared_state.lock:
         shared_state.startup_validated = True
         shared_state.startup_errors = startup_errors
+        shared_state.runtime_conf_threshold = float(CONFIG.model.conf_threshold)
+        shared_state.runtime_iou_threshold = float(CONFIG.model.iou_threshold)
+        shared_state.runtime_skip_frame = max(1, int(CONFIG.model.skip_frame))
+        shared_state.runtime_polylines = [list(polyline) for polyline in CONFIG.counter.polylines]
+        shared_state.runtime_min_hits = int(CONFIG.counter.min_hits)
+        shared_state.runtime_state_threshold = int(CONFIG.counter.state_threshold)
+        shared_state.runtime_reverse_decrease_counting = bool(CONFIG.counter.reverse_decrease_counting)
 
     if startup_errors:
         with shared_state.lock:
@@ -182,6 +219,19 @@ def get_state() -> JSONResponse:
             "running": shared_state.running,
             "status":  shared_state.status_text,
             "count":   shared_state.count,
+            "current_video_path": shared_state.current_video_path,
+            "video_paused": shared_state.video_paused,
+            "requested_video_path": shared_state.requested_video_path,
+            "frame_overlay_lines": list(shared_state.frame_overlay_lines),
+            "runtime": {
+                "conf_threshold": shared_state.runtime_conf_threshold,
+                "iou_threshold": shared_state.runtime_iou_threshold,
+                "skip_frame": shared_state.runtime_skip_frame,
+                "tripwire_polylines": [list(polyline) for polyline in shared_state.runtime_polylines],
+                "min_hits": shared_state.runtime_min_hits,
+                "state_threshold": shared_state.runtime_state_threshold,
+                "reverse_decrease_counting": shared_state.runtime_reverse_decrease_counting,
+            },
         })
 
 
@@ -213,6 +263,7 @@ def ready() -> JSONResponse:
         snap["startup_validated"]
         and len(snap["startup_errors"]) == 0
         and snap["engine_thread_alive"]
+        and snap["model_ready"]
     )
     payload = {
         "ready": is_ready,
@@ -231,6 +282,270 @@ def events_recent(limit: int = Query(50, ge=1, le=500)) -> JSONResponse:
         total = len(events)
         sliced = events[-limit:]
     return JSONResponse({"events": sliced, "count": len(sliced), "total_buffered": total})
+
+
+@app.get("/config", summary="Active runtime configuration")
+def get_config() -> JSONResponse:
+    """Expose selected active config values used by the counting engine."""
+    return JSONResponse(
+        {
+            "video": {
+                "path": CONFIG.video.path,
+                "loop": CONFIG.video.loop,
+                "available_files": _list_video_files(),
+            },
+            "model": {
+                "path": CONFIG.model.path,
+                "task": CONFIG.model.task,
+                "classes": CONFIG.model.classes,
+                "conf_threshold": CONFIG.model.conf_threshold,
+                "iou_threshold": CONFIG.model.iou_threshold,
+                "skip_frame": CONFIG.model.skip_frame,
+            },
+            "counter": {
+                "name": CONFIG.counter.name,
+                "event_type": CONFIG.counter.event_type,
+                "input_name": CONFIG.counter.input_name,
+                "polylines": CONFIG.counter.polylines,
+                "crossing_directions": CONFIG.counter.crossing_directions,
+                "crossing_order": CONFIG.counter.crossing_order,
+                "anchor_point": CONFIG.counter.anchor_point,
+                "state_threshold": CONFIG.counter.state_threshold,
+                "reverse_decrease_counting": CONFIG.counter.reverse_decrease_counting,
+                "min_hits": CONFIG.counter.min_hits,
+            },
+        }
+    )
+
+
+@app.get("/runtime-settings", summary="Live runtime detection settings")
+def get_runtime_settings() -> JSONResponse:
+    """Return runtime-adjustable parameters currently used by the engine loop."""
+    with shared_state.lock:
+        return JSONResponse(
+            {
+                "conf_threshold": shared_state.runtime_conf_threshold,
+                "iou_threshold": shared_state.runtime_iou_threshold,
+                "skip_frame": shared_state.runtime_skip_frame,
+                "tripwire_polylines": [list(polyline) for polyline in shared_state.runtime_polylines],
+                "min_hits": shared_state.runtime_min_hits,
+                "state_threshold": shared_state.runtime_state_threshold,
+                "reverse_decrease_counting": shared_state.runtime_reverse_decrease_counting,
+            }
+        )
+
+
+@app.post("/runtime-settings", summary="Update live runtime detection settings")
+async def update_runtime_settings(request: Request) -> JSONResponse:
+    """Apply runtime settings without restarting the backend process."""
+    payload = await request.json()
+
+    with shared_state.lock:
+        current_conf = float(shared_state.runtime_conf_threshold)
+        current_iou = float(shared_state.runtime_iou_threshold)
+        current_skip = int(shared_state.runtime_skip_frame)
+        current_polylines = [list(polyline) for polyline in shared_state.runtime_polylines]
+        current_min_hits = int(shared_state.runtime_min_hits)
+        current_state_threshold = int(shared_state.runtime_state_threshold)
+        current_reverse_decrease = bool(shared_state.runtime_reverse_decrease_counting)
+
+    try:
+        conf = float(payload.get("conf_threshold", current_conf))
+        iou = float(payload.get("iou_threshold", current_iou))
+        skip = int(payload.get("skip_frame", current_skip))
+        min_hits = int(payload.get("min_hits", current_min_hits))
+        state_threshold = int(payload.get("state_threshold", current_state_threshold))
+        reverse_decrease_counting = bool(payload.get("reverse_decrease_counting", current_reverse_decrease))
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid runtime settings values"}, status_code=400)
+
+    polylines_payload = payload.get("tripwire_polylines")
+    line1_y_payload = payload.get("line1_y")
+    line2_y_payload = payload.get("line2_y")
+
+    polylines = current_polylines
+    if line1_y_payload is not None or line2_y_payload is not None:
+        if len(current_polylines) < 2:
+            return JSONResponse({"ok": False, "error": "current tripwire setup requires at least two lines"}, status_code=400)
+        try:
+            y1 = float(line1_y_payload if line1_y_payload is not None else current_polylines[0][0][1])
+            y2 = float(line2_y_payload if line2_y_payload is not None else current_polylines[1][0][1])
+        except Exception:
+            return JSONResponse({"ok": False, "error": "line1_y/line2_y must be numeric"}, status_code=400)
+        if not 0.0 <= y1 <= 1.0 or not 0.0 <= y2 <= 1.0:
+            return JSONResponse({"ok": False, "error": "line1_y/line2_y must be between 0.0 and 1.0"}, status_code=400)
+        polylines = [list(polyline) for polyline in current_polylines]
+        polylines[0] = [(0.0, y1), (1.0, y1)]
+        polylines[1] = [(0.0, y2), (1.0, y2)]
+    elif polylines_payload is not None:
+        try:
+            parsed: list[list[tuple[float, float]]] = []
+            for polyline in polylines_payload:
+                if not isinstance(polyline, list) or len(polyline) != 2:
+                    raise ValueError()
+                p1 = (float(polyline[0][0]), float(polyline[0][1]))
+                p2 = (float(polyline[1][0]), float(polyline[1][1]))
+                parsed.append([p1, p2])
+            polylines = parsed
+        except Exception:
+            return JSONResponse({"ok": False, "error": "tripwire_polylines must be [[[x,y],[x,y]], ...]"}, status_code=400)
+
+    if not 0.0 <= conf <= 1.0:
+        return JSONResponse({"ok": False, "error": "conf_threshold must be between 0.0 and 1.0"}, status_code=400)
+    if not 0.0 <= iou <= 1.0:
+        return JSONResponse({"ok": False, "error": "iou_threshold must be between 0.0 and 1.0"}, status_code=400)
+    if skip < 1:
+        return JSONResponse({"ok": False, "error": "skip_frame must be >= 1"}, status_code=400)
+    if min_hits < 1:
+        return JSONResponse({"ok": False, "error": "min_hits must be >= 1"}, status_code=400)
+    if state_threshold < 2:
+        return JSONResponse({"ok": False, "error": "state_threshold must be >= 2"}, status_code=400)
+    if len(polylines) != len(CONFIG.counter.crossing_directions):
+        return JSONResponse(
+            {"ok": False, "error": "tripwire_polylines count must match configured crossing directions"},
+            status_code=400,
+        )
+
+    with shared_state.lock:
+        shared_state.runtime_conf_threshold = conf
+        shared_state.runtime_iou_threshold = iou
+        shared_state.runtime_skip_frame = skip
+        shared_state.runtime_polylines = [list(polyline) for polyline in polylines]
+        shared_state.runtime_min_hits = min_hits
+        shared_state.runtime_state_threshold = state_threshold
+        shared_state.runtime_reverse_decrease_counting = reverse_decrease_counting
+        shared_state.status_text = (
+            f"Runtime settings updated: conf={conf:.2f} iou={iou:.2f} skip={skip} "
+            f"min_hits={min_hits} state_threshold={state_threshold}"
+        )
+
+    shared_state.add_event(
+        "runtime_settings_updated",
+        {
+            "conf_threshold": conf,
+            "iou_threshold": iou,
+            "skip_frame": skip,
+            "tripwire_polylines": [list(polyline) for polyline in polylines],
+            "min_hits": min_hits,
+            "state_threshold": state_threshold,
+            "reverse_decrease_counting": reverse_decrease_counting,
+        },
+    )
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "conf_threshold": conf,
+            "iou_threshold": iou,
+            "skip_frame": skip,
+            "tripwire_polylines": [list(polyline) for polyline in polylines],
+            "min_hits": min_hits,
+            "state_threshold": state_threshold,
+            "reverse_decrease_counting": reverse_decrease_counting,
+        }
+    )
+
+
+@app.get("/videos", summary="List selectable video files")
+def list_videos() -> JSONResponse:
+    """Return available input video files under the configured videos directory."""
+    with shared_state.lock:
+        current = shared_state.current_video_path or CONFIG.video.path
+    return JSONResponse({"videos": _list_video_files(), "current_video_path": current})
+
+
+@app.post("/videos/select", summary="Select active input video")
+async def select_video(request: Request) -> JSONResponse:
+    """Request the engine to switch to a different video file."""
+    payload = await request.json()
+    selected_path = str(payload.get("path", "")).strip()
+    if not selected_path:
+        return JSONResponse({"ok": False, "error": "path is required"}, status_code=400)
+
+    root = _get_videos_root()
+    candidate = (root / Path(selected_path).name).resolve()
+    if candidate.parent != root.resolve() or not candidate.exists() or not candidate.is_file():
+        return JSONResponse({"ok": False, "error": "video file not found"}, status_code=404)
+    if candidate.suffix.lower() not in _VIDEO_EXTENSIONS:
+        return JSONResponse({"ok": False, "error": "unsupported video file extension"}, status_code=400)
+
+    requested = f"videos/{candidate.name}"
+    with shared_state.lock:
+        shared_state.requested_video_path = requested
+        shared_state.status_text = f"Switching video to {requested}"
+    shared_state.add_event("video_switch_requested", {"video_path": requested})
+    return JSONResponse({"ok": True, "requested_video_path": requested})
+
+
+@app.post("/videos/restart", summary="Restart current video from beginning")
+def restart_video() -> JSONResponse:
+    """Request engine to seek current video back to frame 0 and reset counting state."""
+    with shared_state.lock:
+        current = shared_state.current_video_path or CONFIG.video.path
+        shared_state.restart_video_requested = True
+        shared_state.status_text = f"Restarting video: {current}"
+    shared_state.add_event("video_restart_requested", {"video_path": current})
+    return JSONResponse({"ok": True, "video_path": current})
+
+
+@app.post("/videos/pause", summary="Pause current video playback")
+def pause_video() -> JSONResponse:
+    """Pause frame progression while keeping the stream endpoint active."""
+    with shared_state.lock:
+        shared_state.video_paused = True
+        current = shared_state.current_video_path or CONFIG.video.path
+        shared_state.status_text = f"Video paused: {current}"
+    shared_state.add_event("video_paused", {"video_path": current})
+    return JSONResponse({"ok": True, "video_paused": True, "video_path": current})
+
+
+@app.post("/videos/resume", summary="Resume current video playback")
+def resume_video() -> JSONResponse:
+    """Resume frame progression after a pause."""
+    with shared_state.lock:
+        shared_state.video_paused = False
+        current = shared_state.current_video_path or CONFIG.video.path
+        shared_state.status_text = f"Video playing: {current}"
+    shared_state.add_event("video_resumed", {"video_path": current})
+    return JSONResponse({"ok": True, "video_paused": False, "video_path": current})
+
+
+@app.post("/videos/upload", summary="Upload and select input video")
+async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
+    """Upload a local video file from the browser and switch engine source to it."""
+    filename = (file.filename or "").strip()
+    suffix = Path(filename).suffix.lower()
+    if suffix not in _VIDEO_EXTENSIONS:
+        return JSONResponse(
+            {"ok": False, "error": "unsupported video file extension"},
+            status_code=400,
+        )
+
+    root = _get_videos_root()
+    root.mkdir(parents=True, exist_ok=True)
+
+    stem = Path(filename).stem or "uploaded_video"
+    safe_stem = "".join(ch for ch in stem if ch.isalnum() or ch in ("-", "_")) or "uploaded_video"
+    target_name = f"{safe_stem}_{int(time.time())}{suffix}"
+    target_path = (root / target_name).resolve()
+
+    if target_path.parent != root.resolve():
+        return JSONResponse({"ok": False, "error": "invalid target path"}, status_code=400)
+
+    try:
+        with target_path.open("wb") as out_file:
+            shutil.copyfileobj(file.file, out_file)
+    finally:
+        await file.close()
+
+    requested = f"videos/{target_name}"
+    with shared_state.lock:
+        shared_state.requested_video_path = requested
+        shared_state.status_text = f"Switching video to {requested}"
+    shared_state.add_event("video_uploaded", {"video_path": requested, "original_name": filename})
+    shared_state.add_event("video_switch_requested", {"video_path": requested})
+
+    return JSONResponse({"ok": True, "requested_video_path": requested})
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +602,7 @@ async def stream():
 @app.get("/", response_class=HTMLResponse, summary="Web control UI")
 async def index(request: Request) -> HTMLResponse:
     """Serve the single-page HTML control interface."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html", {"request": request})
 
 
 def _debug_main() -> None:

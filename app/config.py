@@ -54,7 +54,6 @@ class CounterConfig:
     anchor_point: str
     min_hits: int
     state_threshold: int
-    reverse_decrease_counting: bool
     size_sanity_enabled: bool
     min_width_ratio: float
     max_width_ratio: float
@@ -128,7 +127,6 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "AnchorPoint": "TopCenter",
         "min_hits": 3,
         "state_threshold": 3,
-        "reverse_decrease_counting": False,
         "size_sanity": {
             "enabled": True,
             "min_width_ratio": 0.10,
@@ -369,7 +367,6 @@ def load_config() -> AppConfig:
             anchor_point=_normalise_anchor_point(merged["counter"]["AnchorPoint"]),
             min_hits=int(merged["counter"]["min_hits"]),
             state_threshold=int(merged["counter"]["state_threshold"]),
-            reverse_decrease_counting=bool(merged["counter"].get("reverse_decrease_counting", False)),
             size_sanity_enabled=bool(size_sanity["enabled"]),
             min_width_ratio=float(size_sanity["min_width_ratio"]),
             max_width_ratio=float(size_sanity["max_width_ratio"]),
