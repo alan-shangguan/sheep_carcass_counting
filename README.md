@@ -81,14 +81,14 @@ counter:
   state_threshold: 3
   size_sanity:
     enabled: true
-    min_width_ratio: 0.10
-    max_width_ratio: 0.409
-    min_height_ratio: 0.057
-    max_height_ratio: 0.422
-    min_area_ratio: 0.006
-    max_area_ratio: 0.12
-    min_aspect_ratio: 0.56
-    max_aspect_ratio: 2.23
+    min_width_ratio: 0.09
+    max_width_ratio: 0.45
+    min_height_ratio: 0.05
+    max_height_ratio: 0.45
+    min_area_ratio: 0.005
+    max_area_ratio: 0.14
+    min_aspect_ratio: 0.2
+    max_aspect_ratio: 0.75
 ```
 
 The runtime logic is:
