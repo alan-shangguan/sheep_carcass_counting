@@ -1,9 +1,10 @@
 # Runtime configuration for the sheep carcass counting backend.
 # Edit values here instead of changing Python source.
 
+
 video:
   # Local input video file.
-  path: videos/Event20260123020157006.mp4
+  path: videos/Event20260204013619006_first10s.mp4
 
   # Restart from frame 0 when the file reaches the end.
   loop: true
@@ -64,14 +65,14 @@ counter:
   # Filter counted objects using observed clean-instance size statistics.
   size_sanity:
     enabled: true
-    min_width_ratio: 0.07
-    max_width_ratio: 0.50
-    min_height_ratio: 0.04
-    max_height_ratio: 0.55
-    min_area_ratio: 0.003
-    max_area_ratio: 0.18
-    min_aspect_ratio: 0.35
-    max_aspect_ratio: 3.00
+    min_width_ratio: 0.09
+    max_width_ratio: 0.45
+    min_height_ratio: 0.05
+    max_height_ratio: 0.45
+    min_area_ratio: 0.005
+    max_area_ratio: 0.14
+    min_aspect_ratio: 0.50
+    max_aspect_ratio: 2.5
 
 stream:
   # JPEG quality for the MJPEG stream.

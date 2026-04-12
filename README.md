@@ -94,11 +94,9 @@ counter:
 The runtime logic is:
 
 1. Filter weak detections first using the configured confidence threshold.
-2. Apply size sanity checks after the confidence threshold. This
-   rejects boxes whose width, height, area, or aspect ratio does not look like a
-   real carcass. This is useful for the remaining white-litter false positives.
-3. Pass the remaining detections into simple iou tracker so one carcass can keep an
-   identity across multiple frames, even if the detector confidence fluctuates.
+2. Immediately after the confidence threshold, apply size sanity checks using the configured min/max ratios for width, height, area, and aspect ratio. Only detections that pass all these checks are considered valid carcasses. This pre-filter removes most remaining white-litter false positives before tracking and tripwire logic.
+3. Pass the remaining detections into a custom Simple IoU tracker so one carcass can keep an
+  identity across multiple frames, even if the detector confidence fluctuates. (Note: This is not ByteTrack.)
 4. Convert each tracked bounding box into an anchor point. The current config
    uses `TopCenter`, which was selected for this camera/conveyor view.
 5. For each surviving track, record which side of each tripwire the anchor is
@@ -116,6 +114,8 @@ outside the conveyor/counting area. I chose not to enable it for this test
 because the scene is simple and the combination of confidence threshold, size
 sanity check, Simple IoU tracker, and ordered tripwires was enough. The design still
 leaves room to add ROI filtering if the camera view becomes more cluttered.
+
+**Note:** All tracking memory (`track_memory`) is modified only by the engine thread for concurrency safety.
 
 This handles the main failure modes:
 
@@ -137,9 +137,9 @@ This handles the main failure modes:
 | Requirement | Implementation |
 | --- | --- |
 | Train/use a carcass detector | The repo includes trained/exported model artifacts in `weights/`, with the active OpenVINO model at `weights/best_openvino_model`. Metadata shows a one-class YOLO-style detector for `object`. |
-| Robust counting despite imperfect detections | Detection is combined with IoU tracking, configurable confidence/IoU thresholds, skip-frame inference, anchor-point selection, ordered virtual tripwires, side-history smoothing, and size sanity filters. |
-| Start/Stop latching | `POST /start` and `POST /stop` latch `SharedState.running`. Frames continue streaming, but inference/counting only happens in the running state. |
-| Reset momentary | `POST /reset` sets `SharedState.reset_requested`. The engine consumes it on the next loop, zeroes the count, clears tracking memory, resets tracker state, and clears the flag. |
+| Robust counting despite imperfect detections | Detection is combined with a custom Simple IoU tracker, configurable confidence/IoU thresholds, skip-frame inference, anchor-point selection, ordered virtual tripwires, side-history smoothing, and size sanity filters. |
+| Start/Stop latching | `POST /start` and `POST /stop` set `SharedState.running`. Frames continue streaming, but inference/counting only happens in the running state. |
+| Reset momentary | `POST /reset` sets `SharedState.reset_requested`. The engine consumes it on the next loop, zeroes the count, clears tracking memory (engine thread only), resets tracker state, and clears the flag. |
 | Real-time backend responsiveness | FastAPI handlers only update shared state under a short lock. The OpenCV/OpenVINO worker thread owns video capture and inference, and it does not hold the API lock during inference or JPEG encoding. |
 | Web dashboard | `GET /` serves a browser UI with live annotated MJPEG stream, current count, running/stopped state, video controls, runtime settings, health/readiness metrics, and recent events. |
 | Linux/headless deployment | Dockerfile and Docker Compose files are provided. The runtime uses CPU-friendly dependencies: FastAPI, OpenCV headless, OpenVINO, SciPy, NumPy, and PyYAML. |
@@ -149,7 +149,7 @@ This handles the main failure modes:
 The application is intentionally split into three layers:
 
 1. `app/main.py`: FastAPI API, browser UI routes, startup validation, and control endpoints.
-2. `app/engine.py`: long-running OpenCV/OpenVINO worker loop that reads video, runs inference/tracking, performs counting, draws overlays, writes optional render output, and updates shared state.
+2. `app/engine.py`: long-running OpenCV/OpenVINO worker loop that reads video, runs inference/tracking (Simple IoU tracker), performs counting, draws overlays, writes optional render output, and updates shared state.
 3. `app/state.py`: thread-safe state object used as the boundary between the web layer and CV engine.
 
 This avoids coupling request handling to expensive CV work. The UI can remain
@@ -171,7 +171,7 @@ SharedState (app/state.py)
    v
 CV engine (app/engine.py)
    |
-   | OpenCV video + OpenVINO detector + ioutracker
+  | OpenCV video + OpenVINO detector + Simple IoU tracker
    v
 Tripwire counter (app/counter.py)
 ```
@@ -209,7 +209,7 @@ POST /start
 
 Sets `shared_state.running = True`. This is latching. The engine processes
 frames, runs inference, updates tracking memory, and increments/decrements the
-count only while running.
+count only while running. **Only the engine thread modifies tracking memory.**
 
 ### Stop
 
@@ -230,9 +230,9 @@ Sets `shared_state.reset_requested = True`. This is momentary. The engine
 consumes the flag on its next loop iteration, then:
 
 - sets `count = 0`
-- clears `track_memory`
+- clears `track_memory` (engine thread only)
 - clears `reset_requested`
-- resets the OpenVINO tracker when available
+- resets the Simple IoU tracker when available
 - returns status to `Running` or `Idle` based on the current latch state
 
 The reset signal therefore does not stick.
@@ -415,6 +415,4 @@ http://<edge-unit-ip>:8000/
   workspace no longer contains a standalone render runner script.
 - `app/engine_helpers.py` contains helper functions, while the current
   `app/engine.py` loop keeps its own local helper implementations.
-- The dashboard tripwire Y controls were removed from the UI summary; runtime
-  tripwire polylines can still be controlled through the backend payload shape
-  supported by `POST /runtime-settings`.
+The dashboard tripwire Y controls are now presented as a flexible JSON polylines field in the Runtime Settings panel. Users can directly edit tripwire Y coordinates via the UI and apply changes through the "Tripwire Polylines" input and the Apply button, which POSTs to `/runtime-settings`.
