@@ -383,6 +383,7 @@ def _passes_size_sanity(bbox: tuple[float, float, float, float], frame_w: int, f
     box_w = max(0.0, float(x2) - float(x1))
     box_h = max(0.0, float(y2) - float(y1))
     if box_w <= 0.0 or box_h <= 0.0 or frame_w <= 0 or frame_h <= 0:
+        log_event("size_sanity_invalid_box", bbox=bbox, frame_w=frame_w, frame_h=frame_h)
         return False
 
     width_ratio = box_w / float(frame_w)
@@ -390,12 +391,39 @@ def _passes_size_sanity(bbox: tuple[float, float, float, float], frame_w: int, f
     area_ratio = (box_w * box_h) / float(frame_w * frame_h)
     aspect_ratio = box_w / box_h
 
-    return (
-        CONFIG.counter.min_width_ratio <= width_ratio <= CONFIG.counter.max_width_ratio
-        and CONFIG.counter.min_height_ratio <= height_ratio <= CONFIG.counter.max_height_ratio
-        and CONFIG.counter.min_area_ratio <= area_ratio <= CONFIG.counter.max_area_ratio
-        and CONFIG.counter.min_aspect_ratio <= aspect_ratio <= CONFIG.counter.max_aspect_ratio
+    failed = []
+    if not (CONFIG.counter.min_width_ratio <= width_ratio <= CONFIG.counter.max_width_ratio):
+        failed.append(f"width_ratio={width_ratio:.3f} not in [{CONFIG.counter.min_width_ratio},{CONFIG.counter.max_width_ratio}]")
+    if not (CONFIG.counter.min_height_ratio <= height_ratio <= CONFIG.counter.max_height_ratio):
+        failed.append(f"height_ratio={height_ratio:.3f} not in [{CONFIG.counter.min_height_ratio},{CONFIG.counter.max_height_ratio}]")
+    if not (CONFIG.counter.min_area_ratio <= area_ratio <= CONFIG.counter.max_area_ratio):
+        failed.append(f"area_ratio={area_ratio:.3f} not in [{CONFIG.counter.min_area_ratio},{CONFIG.counter.max_area_ratio}]")
+    if not (CONFIG.counter.min_aspect_ratio <= aspect_ratio <= CONFIG.counter.max_aspect_ratio):
+        failed.append(f"aspect_ratio={aspect_ratio:.3f} not in [{CONFIG.counter.min_aspect_ratio},{CONFIG.counter.max_aspect_ratio}]")
+    if failed:
+        log_event(
+            "size_sanity_rejected",
+            bbox=bbox,
+            frame_w=frame_w,
+            frame_h=frame_h,
+            width_ratio=width_ratio,
+            height_ratio=height_ratio,
+            area_ratio=area_ratio,
+            aspect_ratio=aspect_ratio,
+            fail_reason="; ".join(failed),
+        )
+        return False
+    log_event(
+        "size_sanity_passed",
+        bbox=bbox,
+        frame_w=frame_w,
+        frame_h=frame_h,
+        width_ratio=width_ratio,
+        height_ratio=height_ratio,
+        area_ratio=area_ratio,
+        aspect_ratio=aspect_ratio,
     )
+    return True
 
 
 def _filter_tracks_for_counting(tracks: list[dict], frame_w: int, frame_h: int) -> list[dict]:

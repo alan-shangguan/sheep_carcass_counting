@@ -510,7 +510,7 @@ async def update_runtime_settings(request: Request) -> JSONResponse:
         shared_state.runtime_reverse_decrease_counting = reverse_decrease_counting
         shared_state.runtime_gate_thickness = gate_thickness
         shared_state.runtime_jpeg_quality = jpeg_quality
-        shared_state.track_memory.clear()
+        # Only engine thread modifies track_memory. API sets flags only.
         shared_state.latest_jpeg = None
         shared_state.latest_frame_width = 0
         shared_state.latest_frame_height = 0
@@ -586,7 +586,7 @@ async def select_video(request: Request) -> JSONResponse:
         shared_state.running = False
         shared_state.video_paused = True
         shared_state.count = 0
-        shared_state.track_memory.clear()
+        # Only engine thread modifies track_memory. API sets flags only.
         shared_state.requested_video_path = requested
         shared_state.restart_video_requested = True
         shared_state.status_text = f"Selected video stopped at first frame: {requested}"
@@ -667,7 +667,7 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
         shared_state.running = False
         shared_state.video_paused = True
         shared_state.count = 0
-        shared_state.track_memory.clear()
+        # Only engine thread modifies track_memory. API sets flags only.
         shared_state.requested_video_path = requested
         shared_state.restart_video_requested = True
         shared_state.status_text = f"Uploaded video stopped at first frame: {requested}"

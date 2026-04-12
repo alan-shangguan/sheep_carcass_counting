@@ -71,8 +71,8 @@ counter:
     max_height_ratio: 0.45
     min_area_ratio: 0.005
     max_area_ratio: 0.14
-    min_aspect_ratio: 0.50
-    max_aspect_ratio: 2.5
+    min_aspect_ratio: 0.2
+    max_aspect_ratio: 0.75
 
 stream:
   # JPEG quality for the MJPEG stream.
