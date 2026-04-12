@@ -97,7 +97,7 @@ The runtime logic is:
 2. Apply size sanity checks after the confidence threshold. This
    rejects boxes whose width, height, area, or aspect ratio does not look like a
    real carcass. This is useful for the remaining white-litter false positives.
-3. Pass the remaining detections into ByteTrack so one carcass can keep an
+3. Pass the remaining detections into simple iou tracker so one carcass can keep an
    identity across multiple frames, even if the detector confidence fluctuates.
 4. Convert each tracked bounding box into an anchor point. The current config
    uses `TopCenter`, which was selected for this camera/conveyor view.
@@ -114,7 +114,7 @@ The runtime logic is:
 An ROI filter could also be applied before counting to ignore detections
 outside the conveyor/counting area. I chose not to enable it for this test
 because the scene is simple and the combination of confidence threshold, size
-sanity check, ByteTrack, and ordered tripwires was enough. The design still
+sanity check, Simple IoU tracker, and ordered tripwires was enough. The design still
 leaves room to add ROI filtering if the camera view becomes more cluttered.
 
 This handles the main failure modes:
@@ -171,7 +171,7 @@ SharedState (app/state.py)
    v
 CV engine (app/engine.py)
    |
-   | OpenCV video + OpenVINO detector + ByteTrack
+   | OpenCV video + OpenVINO detector + ioutracker
    v
 Tripwire counter (app/counter.py)
 ```
